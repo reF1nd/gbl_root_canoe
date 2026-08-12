@@ -185,6 +185,26 @@ WaitForVolumeUpKey (IN UINT32 TimeoutMs)
 EFI_STATUS
 ReadAllowUnlockValue (UINT32 *IsAllowUnlock);
 
+STATIC
+EFI_STATUS
+LaunchFastBootImage (VOID)
+{
+  EFI_STATUS  Status;
+  VOID        *Buffer = NULL;
+  UINTN       ImageBytes = 0;
+  UINTN       Pages = 0;
+
+  Status = SfbLoadFastBootImage (&Buffer, &ImageBytes, &Pages);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = SfbLaunchImageBuffer (Buffer, ImageBytes);
+
+  FreeAlignedPages (Buffer, Pages);
+  return Status;
+}
+
 EFI_STATUS EFIAPI  __attribute__ ( (no_sanitize ("safe-stack")))
 LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
@@ -244,6 +264,14 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
      */
     MenuRequested = IsAllowUnlock ? WaitForVolumeUpKey (1000) : FALSE;
     DEBUG ((EFI_D_INFO, "SFB: power-on volume-up detected=%u\n", MenuRequested));
+
+    /* With OEM unlocking disabled, the module-managed Android entry can be
+     * loaded directly from raw efisp. Any missing/corrupt/failed image falls
+     * through to the unchanged full stack and recovery menu below. */
+    if (!IsAllowUnlock && SfbDefaultIsFastBoot ()) {
+      Status = LaunchFastBootImage ();
+      DEBUG ((EFI_D_ERROR, "SFB: raw fast boot returned: %r\n", Status));
+    }
 
     /*
      * Now bring up the embedded FAT/USB stack so both the default entry and the

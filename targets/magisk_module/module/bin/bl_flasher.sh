@@ -30,7 +30,6 @@ if [ "$LANG" = "zh" ]; then
   TEXT_EFISP_WRITE_FAILED="写入 efisp 启动文件失败"
   TEXT_BACKUP_BOOT="已备份旧的 boot.efi"
   TEXT_EFISP_FILES_OK="efisp 启动项已更新"
-  TEXT_EFISP_SET_RW_FAILED="efisp 分区设置可写失败"
   TEXT_EFISP_FLASH_FAILED="efisp 刷写失败"
   TEXT_EFISP_FLASH_OK="efisp 刷写完成"
   TEXT_UPDATING_BDS_TOOLS="正在更新 BDS 与 Tools"
@@ -65,7 +64,6 @@ else
   TEXT_EFISP_WRITE_FAILED="efisp boot file write failed"
   TEXT_BACKUP_BOOT="Backed up old boot.efi"
   TEXT_EFISP_FILES_OK="efisp boot entries updated"
-  TEXT_EFISP_SET_RW_FAILED="efisp setrw failed"
   TEXT_EFISP_FLASH_FAILED="efisp flash failed"
   TEXT_EFISP_FLASH_OK="efisp flash ok"
   TEXT_UPDATING_BDS_TOOLS="Updating BDS and Tools"
@@ -186,9 +184,9 @@ update_efisp() {
   is_debug=$2
   rm -f $RUNTIME_DIR/*
   $MODDIR/bin/extractfv -o $RUNTIME_DIR -v "$abl" >> "$LOG_FILE" 2>&1
-  $MODDIR/bin/patch_abl $RUNTIME_DIR/LinuxLoader.efi $RUNTIME_DIR/patched.efi >> $RUNTIME_DIR/patch.log 2>&1
+  $MODDIR/bin/patch_abl $RUNTIME_DIR/LinuxLoader.efi $RUNTIME_DIR/patched.efi $RUNTIME_DIR/fastboot.hdr >> $RUNTIME_DIR/patch.log 2>&1
   cat $RUNTIME_DIR/patch.log >> "$LOG_FILE"
-  [ -f $RUNTIME_DIR/patched.efi ] || { write_log "$TEXT_PATCH_FAILED"; return 1; }
+  [ -f $RUNTIME_DIR/patched.efi ] && [ -f $RUNTIME_DIR/fastboot.hdr ] || { write_log "$TEXT_PATCH_FAILED"; return 1; }
 
   # The optional GBL patch (efisp -> nulls rename) succeeds only when the ABL
   # actually loads efisp; its warning is therefore the vuln indicator.
@@ -230,15 +228,12 @@ update_efisp() {
     return 0
   fi
 
-  if ! blockdev --setrw "$BY_NAME_DIR/efisp" >> "$LOG_FILE" 2>&1; then
-    write_log "$TEXT_EFISP_SET_RW_FAILED"
-    return 1
-  fi
-  if ! dd if="$BDS_EFI" of="$BY_NAME_DIR/efisp" bs=4M conv=fsync >> "$LOG_FILE" 2>&1; then
+  if ! sh "$MODDIR/bin/flash_efisp_layout.sh" "$BY_NAME_DIR/efisp" \
+       "$BDS_EFI" "$RUNTIME_DIR/patched.efi" "$RUNTIME_DIR/fastboot.hdr" \
+       "$LOG_FILE" "$RUNTIME_DIR/efisp-readback"; then
     write_log "$TEXT_EFISP_FLASH_FAILED"
     return 1
   fi
-  sync
   write_log "$TEXT_EFISP_FLASH_OK"
 
   if [ "$gbl_vuln" = "1" ]; then
@@ -307,16 +302,14 @@ update_bds_tools() {
 
   mkdir -p "$EFISP_DIR" >> "$LOG_FILE" 2>&1 || { write_log "$TEXT_EFISP_MKDIR_FAILED"; return 1; }
 
-  # 1. Flash the BDS itself to the raw efisp partition.
-  if ! blockdev --setrw "$BY_NAME_DIR/efisp" >> "$LOG_FILE" 2>&1; then
-    write_log "$TEXT_EFISP_SET_RW_FAILED"
-    return 1
-  fi
-  if ! dd if="$BDS_EFI" of="$BY_NAME_DIR/efisp" bs=4M conv=fsync >> "$LOG_FILE" 2>&1; then
+  # 1. Update only the BDS prefix. The shared writer verifies that it stays
+  # below the raw fast-boot header and checks the written bytes on readback.
+  if ! sh "$MODDIR/bin/flash_efisp_layout.sh" --bds-only \
+       "$BY_NAME_DIR/efisp" "$BDS_EFI" "$LOG_FILE" \
+       "$RUNTIME_DIR/efisp-readback"; then
     write_log "$TEXT_EFISP_FLASH_FAILED"
     return 1
   fi
-  sync
   write_log "$TEXT_EFISP_FLASH_OK"
 
   # 2. Replace the boot-root tree (BOOTENTRIES + tools/) with the bundled one.

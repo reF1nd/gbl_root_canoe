@@ -280,6 +280,28 @@ SfbLoadEntryRecord (IN UINTN Slot, OUT SFB_BOOT_ENTRY *Entry)
   return SfbResolveRecord (Label, Path, Desc, Entry);
 }
 
+BOOLEAN
+SfbDefaultIsFastBoot (VOID)
+{
+  CHAR8        Record[SFB_STORE_SLOT_BYTES];
+  CONST CHAR8  *Cursor;
+  CHAR16       Tag[8];
+  CHAR16       Label[SFB_DESC_CHARS];
+  CHAR16       Path[SFB_PATH_CHARS];
+
+  if (EFI_ERROR (SfbStoreRead (SFB_STORE_DEFAULT, Record,
+                               sizeof (Record))) || Record[0] == '\0') {
+    return FALSE;
+  }
+
+  Cursor = SfbTakeField (Record, Tag, ARRAY_SIZE (Tag));
+  Cursor = SfbTakeField (Cursor, Label, ARRAY_SIZE (Label));
+  SfbTakeField (Cursor, Path, ARRAY_SIZE (Path));
+
+  return (BOOLEAN)(StrCmp (Tag, L"SFB1") == 0 &&
+                   StrCmp (Path, L"\\efisp\\boot.efi") == 0);
+}
+
 EFI_STATUS
 SfbSaveDefaultEntry (IN CONST SFB_BOOT_ENTRY *Entry)
 {
@@ -895,6 +917,26 @@ SfbBypassSecurity (VOID)
                                        (VOID **)&mSfbSec2)) && mSfbSec2 != NULL) {
     mSfbSec2->FileAuthentication = SfbAllowAuth;
   }
+}
+
+EFI_STATUS
+SfbLaunchImageBuffer (IN VOID *Buffer, IN UINTN ImageBytes)
+{
+  EFI_STATUS  Status;
+  EFI_HANDLE  ImageHandle = NULL;
+
+  if (Buffer == NULL || ImageBytes == 0) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  SfbBypassSecurity ();
+  Status = gBS->LoadImage (FALSE, gImageHandle, NULL, Buffer, ImageBytes,
+                           &ImageHandle);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  return gBS->StartImage (ImageHandle, NULL, NULL);
 }
 
 EFI_STATUS
