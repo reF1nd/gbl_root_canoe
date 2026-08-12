@@ -27,6 +27,17 @@ jobs:
         make target_toolkit_windows
         make target_toolkit_android
 
+    - name: Verify fast boot layout
+      run: |
+        test_dir=$(mktemp -d)
+        submodules/ablfvextractor/build/extractfv -o "$test_dir" ablrepo/PLZ110/abl.img
+        submodules/patcher/build/patch_abl "$test_dir/LinuxLoader.efi" "$test_dir/patched.efi" "$test_dir/fastboot.hdr"
+        python3 submodules/patcher/tests/verify_fast_header.py "$test_dir/fastboot.hdr" "$test_dir/patched.efi"
+        test "$(stat -c%s submodules/uefi/build/BDS.efi)" -le 524288
+        image_bytes=$(stat -c%s "$test_dir/patched.efi")
+        test $((528384 + (image_bytes + 4095) / 4096 * 4096 + 1048576)) -le 3145728
+        sh -n targets/magisk_module/module/bin/flash_efisp_layout.sh
+
     - name: Build Magisk Module
       run: |
         make target_magisk_module

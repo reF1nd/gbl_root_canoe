@@ -1,17 +1,16 @@
 /*
- * Persistent settings for the super-fastboot boot menu.
+ * Raw efisp layout and persistent settings for the super-fastboot boot menu.
  *
  * The firmware refuses EFI variables it does not already know about, so the
- * menu keeps its two settings in the EFI System Partition instead. Only the
- * last megabyte of that partition is safe to write, so the store sits at the
- * very end of it: two 1 KiB NUL-padded ASCII records, back to back, ending on
- * the partition's last byte.
+ * menu keeps its two settings in the raw efisp partition instead. The module
+ * writes BDS at the front, an optional checked fast-boot copy after a fixed
+ * 512 KiB boundary, and leaves the final megabyte reserved for settings.
  *
- *   [ ... file system ... | 1 MiB scratch ... | rec 0 | rec 1 ] end of ESP
+ *   [ BDS ... 512 KiB | fast header | patched ABL ... | reserved ...
+ *                                             | rec 0 | rec 1 ] end of efisp
  *
- * Nothing here goes through the file system: the records must survive the ESP
- * being written by an operating system that knows nothing about them, and a
- * file would not.
+ * Nothing here goes through a file system. The fast header and image are
+ * validated before launch; the settings records stay at the partition's end.
  *
  * Copyright (c) 2026, contributors to the canoe ABL tree.
  * SPDX-License-Identifier: BSD-3-Clause
@@ -34,7 +33,7 @@ CONST CHAR8 *gSfbStoreModuleTag = "SuperFbStore";
 
 #define SFB_STORE_BYTES  (SFB_STORE_SLOT_BYTES * SFB_STORE_SLOTS)
 
-/* Refuse anything too small to have the megabyte of slack we were promised. */
+/* Refuse anything too small to have the reserved tail used by the store. */
 #define SFB_STORE_MIN_PARTITION_BYTES  SIZE_1MB
 
 /* Sanity bounds on a GPT header before its contents are believed. */
@@ -44,13 +43,30 @@ CONST CHAR8 *gSfbStoreModuleTag = "SuperFbStore";
 
 typedef struct {
   EFI_BLOCK_IO_PROTOCOL  *BlockIo;
+  /* Absolute byte range of efisp on BlockIo's media. Start is zero when
+   * BlockIo already represents the partition rather than its parent disk. */
+  UINT64                 PartitionStart;
+  UINT64                 PartitionBytes;
   /* Absolute byte offset of the first store record on BlockIo's media. */
   UINT64                 Offset;
   BOOLEAN                Resolved;
   BOOLEAN                Failed;
 } SFB_STORE_LOCATION;
 
-STATIC SFB_STORE_LOCATION  mSfbStore = { NULL, 0, FALSE, FALSE };
+STATIC SFB_STORE_LOCATION  mSfbStore = { NULL, 0, 0, 0, FALSE, FALSE };
+
+#pragma pack(1)
+typedef struct {
+  CHAR8   Magic[8];
+  UINT32  Version;
+  UINT32  HeaderBytes;
+  UINT64  ImageOffset;
+  UINT32  ImageBytes;
+  UINT32  ImageCrc32;
+  UINT32  HeaderCrc32;
+  UINT32  Reserved;
+} SFB_FAST_HEADER;
+#pragma pack()
 
 /* ---- finding the EFI System Partition ----------------------------------- */
 
@@ -136,7 +152,9 @@ SfbRankEspEntry (IN CONST EFI_PARTITION_ENTRY *Entry)
  */
 STATIC
 EFI_STATUS
-SfbFindEspInGpt (IN EFI_BLOCK_IO_PROTOCOL *Disk, OUT UINT64 *PartitionEnd)
+SfbFindEspInGpt (IN EFI_BLOCK_IO_PROTOCOL *Disk,
+                 OUT UINT64               *PartitionStart,
+                 OUT UINT64               *PartitionBytes)
 {
   EFI_STATUS                   Status;
   EFI_PARTITION_TABLE_HEADER   *Header = NULL;
@@ -149,7 +167,8 @@ SfbFindEspInGpt (IN EFI_BLOCK_IO_PROTOCOL *Disk, OUT UINT64 *PartitionEnd)
   UINTN                        Index;
   UINTN                        Best;
 
-  *PartitionEnd = 0;
+  *PartitionStart = 0;
+  *PartitionBytes = 0;
 
   Status = SfbReadBlocks (Disk, PRIMARY_PART_HEADER_LBA, 1,
                           (VOID **)&Header, &HeaderPages);
@@ -202,7 +221,8 @@ SfbFindEspInGpt (IN EFI_BLOCK_IO_PROTOCOL *Disk, OUT UINT64 *PartitionEnd)
       continue;
     }
 
-    *PartitionEnd = (Entry->EndingLBA + 1) * BlockSize;
+    *PartitionStart = Entry->StartingLBA * BlockSize;
+    *PartitionBytes = (Entry->EndingLBA - Entry->StartingLBA + 1) * BlockSize;
     Status = EFI_SUCCESS;
     Best = Rank;
 
@@ -228,7 +248,7 @@ Done:
 STATIC
 EFI_STATUS
 SfbFindEspByPartitionInfo (OUT EFI_BLOCK_IO_PROTOCOL **BlockIo,
-                           OUT UINT64                *PartitionEnd)
+                           OUT UINT64                *PartitionBytes)
 {
   EFI_STATUS  Status;
   EFI_HANDLE  *Handles = NULL;
@@ -236,7 +256,7 @@ SfbFindEspByPartitionInfo (OUT EFI_BLOCK_IO_PROTOCOL **BlockIo,
   UINTN       Index;
 
   *BlockIo = NULL;
-  *PartitionEnd = 0;
+  *PartitionBytes = 0;
 
   Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiPartitionInfoProtocolGuid,
                                     NULL, &Count, &Handles);
@@ -274,7 +294,7 @@ SfbFindEspByPartitionInfo (OUT EFI_BLOCK_IO_PROTOCOL **BlockIo,
 
     /* Addressed relative to the partition, so its end is the media's end. */
     *BlockIo = Candidate;
-    *PartitionEnd = Bytes;
+    *PartitionBytes = Bytes;
     Status = EFI_SUCCESS;
     break;
   }
@@ -293,7 +313,8 @@ SfbResolveStore (VOID)
   EFI_HANDLE  *Handles = NULL;
   UINTN       Count = 0;
   UINTN       Index;
-  UINT64      PartitionEnd = 0;
+  UINT64      PartitionStart = 0;
+  UINT64      PartitionBytes = 0;
 
   if (mSfbStore.Resolved) {
     return EFI_SUCCESS;
@@ -319,7 +340,8 @@ SfbResolveStore (VOID)
         continue;
       }
 
-      if (!EFI_ERROR (SfbFindEspInGpt (Disk, &PartitionEnd))) {
+      if (!EFI_ERROR (SfbFindEspInGpt (Disk, &PartitionStart,
+                                       &PartitionBytes))) {
         mSfbStore.BlockIo = Disk;
         break;
       }
@@ -329,7 +351,7 @@ SfbResolveStore (VOID)
   }
 
   if (mSfbStore.BlockIo == NULL) {
-    Status = SfbFindEspByPartitionInfo (&mSfbStore.BlockIo, &PartitionEnd);
+    Status = SfbFindEspByPartitionInfo (&mSfbStore.BlockIo, &PartitionBytes);
     if (EFI_ERROR (Status)) {
       DEBUG ((EFI_D_ERROR, "SFB: no EFI System Partition found\n"));
       mSfbStore.Failed = TRUE;
@@ -342,7 +364,9 @@ SfbResolveStore (VOID)
     /* Still usable for reads, so this is not a resolution failure. */
   }
 
-  mSfbStore.Offset = PartitionEnd - SFB_STORE_BYTES;
+  mSfbStore.PartitionStart = PartitionStart;
+  mSfbStore.PartitionBytes = PartitionBytes;
+  mSfbStore.Offset = PartitionStart + PartitionBytes - SFB_STORE_BYTES;
   mSfbStore.Resolved = TRUE;
 
   DEBUG ((EFI_D_INFO, "SFB: store at offset 0x%lx (block size %u)\n",
@@ -438,6 +462,102 @@ SfbStoreRead (IN UINTN Slot, OUT CHAR8 *Out, IN UINTN OutBytes)
 }
 
 EFI_STATUS
+SfbLoadFastBootImage (OUT VOID **Buffer, OUT UINTN *ImageBytes,
+                      OUT UINTN *Pages)
+{
+  EFI_STATUS       Status;
+  VOID             *HeaderBuffer = NULL;
+  UINTN            HeaderPages = 0;
+  UINTN            BlockSize;
+  UINTN            HeaderBlocks;
+  UINTN            ImageBlocks;
+  UINT64           HeaderOffset;
+  UINT64           ImageOffset;
+  SFB_FAST_HEADER  Header;
+  UINT32           HeaderCrc;
+  UINT32           CalculatedHeaderCrc;
+  UINT32           ImageCrc;
+
+  *Buffer = NULL;
+  *ImageBytes = 0;
+  *Pages = 0;
+
+  Status = SfbResolveStore ();
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  /* Reject undersized partitions before touching the fixed header offset. */
+  if (mSfbStore.PartitionBytes <= SFB_FAST_IMAGE_OFFSET + SIZE_1MB) {
+    return EFI_NOT_FOUND;
+  }
+
+  BlockSize = mSfbStore.BlockIo->Media->BlockSize;
+  if (BlockSize == 0 || BlockSize > SFB_FAST_HEADER_BYTES ||
+      (SFB_FAST_HEADER_BYTES % BlockSize) != 0 ||
+      ((mSfbStore.PartitionStart + SFB_FAST_HEADER_OFFSET) % BlockSize) != 0) {
+    return EFI_UNSUPPORTED;
+  }
+
+  HeaderOffset = mSfbStore.PartitionStart + SFB_FAST_HEADER_OFFSET;
+  ImageOffset = mSfbStore.PartitionStart + SFB_FAST_IMAGE_OFFSET;
+  HeaderBlocks = SFB_FAST_HEADER_BYTES / BlockSize;
+  Status = SfbReadBlocks (mSfbStore.BlockIo,
+                          HeaderOffset / BlockSize,
+                          HeaderBlocks, &HeaderBuffer, &HeaderPages);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  CopyMem (&Header, HeaderBuffer, sizeof (Header));
+  FreeAlignedPages (HeaderBuffer, HeaderPages);
+
+  if (CompareMem (Header.Magic, "SFBFAST1", sizeof (Header.Magic)) != 0 ||
+      Header.Version != 1 ||
+      Header.HeaderBytes != SFB_FAST_HEADER_BYTES ||
+      Header.ImageOffset != SFB_FAST_IMAGE_OFFSET ||
+      Header.ImageBytes == 0) {
+    return EFI_NOT_FOUND;
+  }
+
+  HeaderCrc = Header.HeaderCrc32;
+  Header.HeaderCrc32 = 0;
+  Status = gBS->CalculateCrc32 (&Header, sizeof (Header),
+                                &CalculatedHeaderCrc);
+  if (EFI_ERROR (Status) || CalculatedHeaderCrc != HeaderCrc) {
+    return EFI_CRC_ERROR;
+  }
+
+  ImageBlocks = (Header.ImageBytes + BlockSize - 1) / BlockSize;
+
+  /* Leave the final megabyte untouched for the existing settings store and
+   * future recovery metadata. Compare the rounded block read, not just the
+   * image bytes, and avoid overflow by subtracting first. */
+  if ((UINT64)ImageBlocks * BlockSize >
+        mSfbStore.PartitionBytes - SFB_FAST_IMAGE_OFFSET - SIZE_1MB) {
+    return EFI_BAD_BUFFER_SIZE;
+  }
+
+  Status = SfbReadBlocks (mSfbStore.BlockIo,
+                          ImageOffset / BlockSize,
+                          ImageBlocks, Buffer, Pages);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = gBS->CalculateCrc32 (*Buffer, Header.ImageBytes, &ImageCrc);
+  if (EFI_ERROR (Status) || ImageCrc != Header.ImageCrc32) {
+    FreeAlignedPages (*Buffer, *Pages);
+    *Buffer = NULL;
+    *Pages = 0;
+    return EFI_CRC_ERROR;
+  }
+
+  *ImageBytes = Header.ImageBytes;
+  return EFI_SUCCESS;
+}
+
+EFI_STATUS
 SfbStoreWrite (IN UINTN Slot, IN CONST CHAR8 *Text)
 {
   EFI_STATUS  Status;
@@ -495,4 +615,3 @@ SfbStoreWrite (IN UINTN Slot, IN CONST CHAR8 *Text)
 
   return Status;
 }
-
