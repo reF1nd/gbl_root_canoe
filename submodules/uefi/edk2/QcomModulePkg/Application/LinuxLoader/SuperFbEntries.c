@@ -1056,12 +1056,11 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
     return EFI_INVALID_PARAMETER;
   }
 
-  /*
-   * Announce the launch: "Booting <name>". Clearing the screen first is only
-   * done for a menu-driven launch; an unattended default boot leaves the screen
-   * (e.g. the boot splash) untouched.
-   */
-  SfbShowBootingScreen (Entry->Desc, ClearScreen);
+  /* Only a menu-driven launch needs a banner. An unattended default boot must
+   * leave the existing boot splash untouched. */
+  if (ClearScreen) {
+    SfbShowBootingScreen (Entry->Desc, TRUE);
+  }
 
   /*
    * Committing the default before the launch is deliberate: an image that boots
@@ -1103,7 +1102,7 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
 }
 
 BOOLEAN
-SfbLaunchDefaultEntry (VOID)
+SfbLaunchDefaultEntry (IN BOOLEAN ShowBanner)
 {
   SFB_MENU_STATE  Menu;
   BOOLEAN         HasDefault;
@@ -1119,14 +1118,16 @@ SfbLaunchDefaultEntry (VOID)
   if (HasDefault) {
     DEBUG ((EFI_D_INFO, "SFB: launching default entry '%s'\n",
             Menu.Entry[Menu.DefaultIndex].Desc));
+    if (ShowBanner) {
+      SfbShowBootingScreen (Menu.Entry[Menu.DefaultIndex].Desc, FALSE);
+    }
     /* Returns only if the load failed or the image handed control back; the
-     * caller then drops into the menu. Unattended boot: do not clear the
-     * screen when announcing "Booting <name>". */
-    SfbLaunchEntry (&Menu.Entry[Menu.DefaultIndex], FALSE, FALSE);
+     * caller then drops into the menu. SfbLaunchEntry stays silent here because
+     * the optional unattended-boot banner was handled above. */
+    SfbLaunchEntry (&Menu.Entry[Menu.DefaultIndex], TRUE, FALSE);
   }
 
   SfbFreeMenu (&Menu);
 
   return HasDefault;
 }
-
