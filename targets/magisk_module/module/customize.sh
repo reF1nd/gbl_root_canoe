@@ -66,7 +66,6 @@ if [ "$LANG" = "zh" ]; then
   T_ABLREPO_OK="abl 分区已降级"
   T_ABL_SETRW_FAIL="abl 分区设置可写失败"
   T_ABL_FLASH_FAIL="abl 分区降级刷写失败"
-  T_SETRW_FAIL="efisp 分区设置可写失败"
   T_FLASH_FAIL="efisp 分区刷写失败"
   T_PERSIST_NOT_MOUNTED="persist 分区未挂载到 /mnt/vendor/persist"
   T_EFISP_DIR_FAIL="创建 efisp 启动目录失败"
@@ -105,7 +104,6 @@ else
   T_ABLREPO_OK="abl partition downgraded"
   T_ABL_SETRW_FAIL="Failed to set abl to read-write"
   T_ABL_FLASH_FAIL="Failed to flash abl partition"
-  T_SETRW_FAIL="Failed to set efisp to read-write"
   T_FLASH_FAIL="Failed to flash efisp"
   T_PERSIST_NOT_MOUNTED="persist is not mounted at /mnt/vendor/persist"
   T_EFISP_DIR_FAIL="efisp boot dir create failed"
@@ -210,8 +208,8 @@ while true; do
     fi
     abl_part="$BY_NAME_DIR/abl$current_slot"
     $MODPATH/bin/extractfv -o $RUNTIME_DIR -v "$abl_part" >> $RUNTIME_DIR/extract.log 2>&1
-    $MODPATH/bin/patch_abl $RUNTIME_DIR/LinuxLoader.efi $RUNTIME_DIR/patched.efi >> $RUNTIME_DIR/patch.log 2>&1
-    if [ ! -f $RUNTIME_DIR/patched.efi ]; then
+    $MODPATH/bin/patch_abl $RUNTIME_DIR/LinuxLoader.efi $RUNTIME_DIR/patched.efi $RUNTIME_DIR/fastboot.hdr >> $RUNTIME_DIR/patch.log 2>&1
+    if [ ! -f $RUNTIME_DIR/patched.efi ] || [ ! -f $RUNTIME_DIR/fastboot.hdr ]; then
       ui_print "$T_PATCH_FAIL"
       abort "patch failed"
     fi
@@ -270,15 +268,13 @@ while true; do
     sync
 
     ui_print "$T_FLASH_BDS"
-    if ! blockdev --setrw $BY_NAME_DIR/efisp >> $RUNTIME_DIR/flash.log 2>&1; then
-      ui_print "$T_SETRW_FAIL"
-      abort "setrw failed"
-    fi
-    if ! dd if=$MODPATH/BDS.efi of=$BY_NAME_DIR/efisp bs=4M conv=fsync >> $RUNTIME_DIR/flash.log 2>&1; then
+    if ! sh "$MODPATH/bin/flash_efisp_layout.sh" "$BY_NAME_DIR/efisp" \
+         "$MODPATH/BDS.efi" "$RUNTIME_DIR/patched.efi" \
+         "$RUNTIME_DIR/fastboot.hdr" "$RUNTIME_DIR/flash.log" \
+         "$RUNTIME_DIR/efisp-readback"; then
       ui_print "$T_FLASH_FAIL"
       abort "flash failed"
     fi
-    sync
     ui_print "$T_DONE_YES"
     rm -rf $RUNTIME_DIR
     break

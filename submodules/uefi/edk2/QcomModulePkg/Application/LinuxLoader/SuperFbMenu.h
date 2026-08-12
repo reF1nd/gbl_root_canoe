@@ -217,13 +217,20 @@ SfbGetVolumeLabel (IN EFI_FILE_PROTOCOL *Root,
  * The firmware on this platform rejects variables it does not know, so the two
  * things the menu has to remember outlive a reboot in the EFI System Partition
  * instead: two 1 KiB NUL-padded ASCII records written to the very end of the
- * partition, which is the only part of it that is safe to touch.
+ * partition. The module reserves the final megabyte for settings and writes
+ * these two records at its very end, outside the raw fast-boot image.
  */
 #define SFB_STORE_SLOT_BYTES  1024
 #define SFB_STORE_SLOTS       2
 
 #define SFB_STORE_DEFAULT  0   /* the entry the menu timeout launches */
 #define SFB_STORE_CUSTOM   1   /* the single user-added menu entry */
+
+/* Raw efisp fast-boot layout. The first 512 KiB remain exclusively BDS.efi;
+ * the next 4 KiB is a checksummed header and the patched ABL follows it. */
+#define SFB_FAST_HEADER_OFFSET  SIZE_512KB
+#define SFB_FAST_HEADER_BYTES   4096
+#define SFB_FAST_IMAGE_OFFSET   (SFB_FAST_HEADER_OFFSET + SFB_FAST_HEADER_BYTES)
 
 /*
  * Replace one record. Text is NUL-terminated ASCII of at most
@@ -238,6 +245,12 @@ SfbStoreWrite (IN UINTN Slot, IN CONST CHAR8 *Text);
  */
 EFI_STATUS
 SfbStoreRead (IN UINTN Slot, OUT CHAR8 *Out, IN UINTN OutBytes);
+
+/* Read and CRC-check the patched ABL stored directly in raw efisp. The caller
+ * releases *Buffer with FreeAlignedPages (*Buffer, *Pages). */
+EFI_STATUS
+SfbLoadFastBootImage (OUT VOID **Buffer, OUT UINTN *ImageBytes,
+                      OUT UINTN *Pages);
 
 /* ---- SuperFbEntries.c: entry list, persistence and launching ------------ */
 
@@ -256,6 +269,10 @@ EFI_STATUS
 SfbBuildSubMenu (OUT SFB_MENU_STATE *Menu,
                  IN EFI_HANDLE      Volume,
                  IN CONST CHAR16    *EntriesPath);
+
+/* TRUE only when the persisted default is the module-managed Android entry. */
+BOOLEAN
+SfbDefaultIsFastBoot (VOID);
 
 VOID
 SfbFreeMenu (IN OUT SFB_MENU_STATE *Menu);
@@ -282,6 +299,11 @@ EFI_STATUS
 SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
                 IN BOOLEAN              Temporary,
                 IN BOOLEAN              ClearScreen);
+
+/* Load an EFI application directly from memory using the same security-policy
+ * bypass as file-backed menu entries. */
+EFI_STATUS
+SfbLaunchImageBuffer (IN VOID *Buffer, IN UINTN ImageBytes);
 
 /*
  * Load and start a single UEFI driver image named by a volume-relative path.
