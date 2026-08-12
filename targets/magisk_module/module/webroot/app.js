@@ -173,7 +173,6 @@ function applyLanguage(lang) {
   document.querySelector("#tblSource").textContent = t.source;
   document.querySelector("#tblTarget").textContent = t.target;
   document.querySelector("#tblAction").textContent = t.action;
-  document.querySelector("#tblWaiting").textContent = t.waiting;
   document.querySelector("#lblLog").textContent = t.log;
   document.querySelector("#lblAutoPoll").textContent = t.autoPoll;
   document.querySelector("#modalRisk").textContent = t.risk;
