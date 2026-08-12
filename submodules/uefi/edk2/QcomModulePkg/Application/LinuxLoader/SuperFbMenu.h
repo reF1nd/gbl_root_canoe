@@ -274,9 +274,9 @@ SfbSaveCustomEntry (IN CONST SFB_BOOT_ENTRY *Entry);
  * default first unless Temporary is TRUE. Only returns if the launch failed or
  * the started image returned.
  *
- * ClearScreen controls the "Booting <name>" banner: TRUE clears the screen
- * first (menu-driven launch), FALSE leaves the current screen contents in place
- * (unattended default boot, which must not blank the boot splash).
+ * ClearScreen controls the "Booting <name>" banner: TRUE clears the screen and
+ * shows it for a menu-driven launch; FALSE leaves an unattended default boot
+ * silent so the existing boot splash stays untouched.
  */
 EFI_STATUS
 SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
@@ -295,11 +295,12 @@ SfbLoadDriver (IN EFI_HANDLE Volume, IN CONST CHAR16 *Path);
  * Launch the stored default entry, if one is configured. Returns TRUE when a
  * persisted default existed and was attempted (on success the launched image
  * takes over and this never returns; on failure it returns TRUE and the caller
- * should fall back to the menu). Returns FALSE when no default is configured,
- * so the caller shows the menu instead.
+ * should fall back to the menu). ShowBanner controls whether unattended boot
+ * prints "Booting <name>" without clearing the existing screen. Returns FALSE
+ * when no default is configured, so the caller shows the menu instead.
  */
 BOOLEAN
-SfbLaunchDefaultEntry (VOID);
+SfbLaunchDefaultEntry (IN BOOLEAN ShowBanner);
 
 /* Fill in an entry describing PathOnVolume on Volume. */
 EFI_STATUS

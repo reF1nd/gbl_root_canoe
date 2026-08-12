@@ -2682,6 +2682,42 @@ PublishGetVarPartitionInfo (
   return RetStatus;
 }
 
+/* Read the OEM unlocking switch from the low bit at the end of FRP. */
+EFI_STATUS
+ReadAllowUnlockValue (UINT32 *IsAllowUnlock)
+{
+  EFI_STATUS             Status;
+  EFI_BLOCK_IO_PROTOCOL  *BlockIo = NULL;
+  EFI_HANDLE             *Handle = NULL;
+  UINT8                  *Buffer;
+
+  Status = PartitionGetInfo ((CHAR16 *)L"frp", &BlockIo, &Handle);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  if (BlockIo == NULL) {
+    return EFI_NOT_FOUND;
+  }
+
+  Buffer = AllocateZeroPool (BlockIo->Media->BlockSize);
+  if (Buffer == NULL) {
+    DEBUG ((EFI_D_ERROR, "Failed to allocate memory for unlock value\n"));
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Status = BlockIo->ReadBlocks (BlockIo, BlockIo->Media->MediaId,
+                                BlockIo->Media->LastBlock,
+                                BlockIo->Media->BlockSize, Buffer);
+  if (!EFI_ERROR (Status)) {
+    /* The OEM unlock setting is stored in the low bit of the last byte. */
+    *IsAllowUnlock = Buffer[BlockIo->Media->BlockSize - 1] & 0x01;
+  }
+
+  FreePool (Buffer);
+  return Status;
+}
+
 /* Registers all Stock commands, Publishes all stock variables
  * and partitiion sizes. base and size are the respective parameters
  * to the Fastboot Buffer used to store the downloaded image for flashing

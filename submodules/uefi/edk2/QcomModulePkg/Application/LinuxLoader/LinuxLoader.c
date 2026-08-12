@@ -182,6 +182,9 @@ WaitForVolumeUpKey (IN UINT32 TimeoutMs)
   return KeyDetected;
 }
 
+EFI_STATUS
+ReadAllowUnlockValue (UINT32 *IsAllowUnlock);
+
 EFI_STATUS EFIAPI  __attribute__ ( (no_sanitize ("safe-stack")))
 LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
@@ -221,17 +224,25 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
   }
 
   {
-    UINT8  MenuRequested;
+    UINT8   MenuRequested;
+    UINT32  IsAllowUnlock = FALSE;
+
+    Status = ReadAllowUnlockValue (&IsAllowUnlock);
+    if (EFI_ERROR (Status) || !IsAllowUnlock) {
+      DEBUG ((EFI_D_INFO,
+              "SFB: OEM unlocking disabled or unavailable: %r\n", Status));
+      IsAllowUnlock = FALSE;
+    }
 
     /*
-     * Scan for Volume Up held at power-on FIRST, before any other init disturbs
-     * the console input. WaitForVolumeUpKey flushes stale input and then waits
-     * for a genuine Volume Up press, skipping every other key (notably the
+     * When OEM unlocking is enabled, scan for Volume Up before FAT/USB init
+     * disturbs the console input. WaitForVolumeUpKey flushes stale input and
+     * waits for a genuine Volume Up press, skipping every other key (notably the
      * power key used to switch the device on) rather than being fooled by it.
      * Volume Up (the official recovery key slot) opens the boot menu; no Volume
      * Up within the window launches the saved default entry.
      */
-    MenuRequested = WaitForVolumeUpKey (1000);
+    MenuRequested = IsAllowUnlock ? WaitForVolumeUpKey (1000) : FALSE;
     DEBUG ((EFI_D_INFO, "SFB: power-on volume-up detected=%u\n", MenuRequested));
 
     /*
@@ -248,7 +259,7 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
       /* No menu key: boot the saved default. This does not return on success;
        * it only comes back if there is no saved default or the launch failed,
        * in which case the menu is shown so the user is never stranded. */
-      SfbLaunchDefaultEntry ();
+      SfbLaunchDefaultEntry (IsAllowUnlock);
     }
 
     /*
