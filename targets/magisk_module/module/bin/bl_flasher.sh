@@ -49,6 +49,19 @@ if [ "$LANG" = "zh" ]; then
   TEXT_ALL_OK_NO_EFISP="全部完成（不含efisp）"
   TEXT_BUSY="任务正在运行"
   TEXT_LOG_CLEARED="日志已清空"
+  TEXT_EXPERT_EFI_OK="专家模式：EFI 更新完成"
+  TEXT_EXPERT_ABL_FAILED="专家模式：ABL 刷写或回读校验失败"
+  TEXT_EXPERT_DONE="专家模式：ABL 与 EFI 已完成"
+  TEXT_EXPERT_BAD_MODE="专家模式：无效的操作方案"
+  TEXT_EXPERT_SLOT_CHANGED="专家模式：活动槽已改变，任务中止"
+  TEXT_EXPERT_PATCH_CHANGED="专家模式：Patch 源 ABL 已改变"
+  TEXT_EXPERT_VULN_CHANGED="专家模式：漏洞 ABL 已改变"
+  TEXT_EXPERT_BAD_PATCH="专家模式：Patch 源 ABL 无效"
+  TEXT_EXPERT_BAD_VULN="专家模式：漏洞 ABL 无效"
+  TEXT_EXPERT_NO_GBL="专家模式：选择的 ABL 没有 GBL 漏洞"
+  TEXT_EXPERT_VALIDATE_PATCH="专家模式：正在验证 Patch 源 ABL"
+  TEXT_EXPERT_UPDATE_EFI="专家模式：正在更新 EFI"
+  TEXT_EXPERT_FLASH_ABL="专家模式：正在刷写"
 else
   TEXT_IDLE="Waiting"
   TEXT_NO_SLOT="Cannot detect current slot"
@@ -83,6 +96,19 @@ else
   TEXT_ALL_OK_NO_EFISP="All done (no efisp)"
   TEXT_BUSY="Task running"
   TEXT_LOG_CLEARED="Log cleared"
+  TEXT_EXPERT_EFI_OK="Expert mode: EFI updated"
+  TEXT_EXPERT_ABL_FAILED="Expert mode: ABL flash or readback verification failed"
+  TEXT_EXPERT_DONE="Expert mode: ABL and EFI completed"
+  TEXT_EXPERT_BAD_MODE="Expert mode: invalid operation"
+  TEXT_EXPERT_SLOT_CHANGED="Expert mode: active slot changed; task aborted"
+  TEXT_EXPERT_PATCH_CHANGED="Expert mode: patch source ABL changed"
+  TEXT_EXPERT_VULN_CHANGED="Expert mode: vulnerable ABL changed"
+  TEXT_EXPERT_BAD_PATCH="Expert mode: invalid patch source ABL"
+  TEXT_EXPERT_BAD_VULN="Expert mode: invalid vulnerable ABL"
+  TEXT_EXPERT_NO_GBL="Expert mode: selected ABL has no GBL vulnerability"
+  TEXT_EXPERT_VALIDATE_PATCH="Expert mode: validating patch source ABL"
+  TEXT_EXPERT_UPDATE_EFI="Expert mode: updating EFI"
+  TEXT_EXPERT_FLASH_ABL="Expert mode: flashing"
 fi
 
 RUNTIME_DIR="$MODDIR/tmp"
@@ -121,6 +147,13 @@ write_state() {
 write_log() {
   ensure_runtime
   echo "[$(timestamp)] $*" >> "$LOG_FILE"
+}
+
+verify_sha256() {
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  expected=$(cut -d' ' -f1 "$2" | tr -d '[:space:]')
+  actual=$(sha256sum "$1" | cut -d' ' -f1 | tr -d '[:space:]')
+  [ -n "$expected" ] && [ "$expected" = "$actual" ]
 }
 
 detect_current_slot() {
@@ -182,7 +215,8 @@ place_efisp_tree_to() {
 update_efisp() {
   abl=$1
   is_debug=$2
-  rm -f $RUNTIME_DIR/*
+  rm -f "$RUNTIME_DIR/LinuxLoader.efi" "$RUNTIME_DIR/patched.efi" \
+    "$RUNTIME_DIR/fastboot.hdr" "$RUNTIME_DIR/patch.log"
   $MODDIR/bin/extractfv -o $RUNTIME_DIR -v "$abl" >> "$LOG_FILE" 2>&1
   $MODDIR/bin/patch_abl $RUNTIME_DIR/LinuxLoader.efi $RUNTIME_DIR/patched.efi $RUNTIME_DIR/fastboot.hdr >> $RUNTIME_DIR/patch.log 2>&1
   cat $RUNTIME_DIR/patch.log >> "$LOG_FILE"
@@ -244,7 +278,8 @@ update_efisp() {
 }
 
 detect_gbl_vulnerability() {
-  rm -f $RUNTIME_DIR/*
+  rm -f "$RUNTIME_DIR/LinuxLoader.efi" "$RUNTIME_DIR/patched.efi" \
+    "$RUNTIME_DIR/fastboot.hdr" "$RUNTIME_DIR/patch.log"
   $MODDIR/bin/extractfv -o $RUNTIME_DIR -v "$1" >> "$LOG_FILE" 2>&1
   $MODDIR/bin/patch_abl $RUNTIME_DIR/LinuxLoader.efi $RUNTIME_DIR/patched.efi >> $RUNTIME_DIR/patch.log 2>&1
   cat $RUNTIME_DIR/patch.log >> "$LOG_FILE"
@@ -450,6 +485,208 @@ clear_log() {
   emit "CLEARED=1"
 }
 
+expert_repo_product() {
+  product_name=$(getprop ro.product.name 2>/dev/null)
+  product_device=$(getprop ro.product.device 2>/dev/null)
+  for product in "$product_name" "$product_device"; do
+    [ -n "$product" ] || continue
+    repo_dir="$MODDIR/ablrepo/$product"
+    verify_sha256 "$repo_dir/abl.img" "$repo_dir/abl.sha256" || continue
+    echo "$product"
+    return 0
+  done
+  return 1
+}
+
+expert_path_allowed() {
+  case "$1" in
+    "$BY_NAME_DIR/abl_a"|"$BY_NAME_DIR/abl_b") return 0 ;;
+    "$RUNTIME_DIR"/expert/x*.img)
+      name=${1#"$RUNTIME_DIR/expert/"}
+      token=${name%.img}
+      [ "$token" != x ] || return 1
+      case "$token" in *[!A-Za-z0-9_-]*) return 1 ;; esac
+      return 0
+      ;;
+  esac
+  product=$(expert_repo_product) || return 1
+  [ "$1" = "$MODDIR/ablrepo/$product/abl.img" ]
+}
+
+analyze_abl() {
+  input=$1
+  output=$2
+  rm -rf "$output"
+  mkdir -p "$output"
+  "$MODDIR/bin/extractfv" -o "$output" -v "$input" > "$output/extract.log" 2>&1 || return 1
+  [ -f "$output/LinuxLoader.efi" ] || return 1
+  "$MODDIR/bin/patch_abl" "$output/LinuxLoader.efi" "$output/patched.efi" \
+    "$output/fastboot.hdr" > "$output/patch.log" 2>&1 || return 1
+  [ -s "$output/patched.efi" ] && [ -s "$output/fastboot.hdr" ]
+}
+
+expert_analyze() {
+  input=$1
+  [ -n "$input" ] && expert_path_allowed "$input" || { emit "ERROR=unsupported input"; return 1; }
+  [ -f "$input" ] || [ -b "$input" ] || { emit "ERROR=input not found"; return 1; }
+  size=$(wc -c < "$input" | tr -d '[:space:]')
+  sha=$(sha256sum "$input" | cut -d' ' -f1)
+  output="$RUNTIME_DIR/expert-analysis"
+  if ! analyze_abl "$input" "$output"; then
+    result=$(printf 'PATH=%s\nSIZE=%s\nSHA256=%s\nEXTRACT=failed\nGBL=unknown\nPATCH=failed\nALLOWED=0\n' \
+      "$input" "$size" "$sha")
+    emit "$result"
+    return 0
+  fi
+  gbl=present
+  grep -q 'Warning: Failed to patch ABL GBL' "$output/patch.log" && gbl=absent
+  allowed=0
+  [ "$gbl" = present ] && allowed=1
+  result=$(printf 'PATH=%s\nSIZE=%s\nSHA256=%s\nEXTRACT=ok\nGBL=%s\nPATCH=ok\nALLOWED=%s\n' \
+    "$input" "$size" "$sha" "$gbl" "$allowed")
+  emit "$result"
+}
+
+expert_repo() {
+  product=$(expert_repo_product)
+  repo="$MODDIR/ablrepo/$product/abl.img"
+  if [ -n "$product" ]; then
+    version=$(tr -d '\r\n' < "$MODDIR/ablrepo/$product/abl_version.txt" 2>/dev/null)
+    result=$(printf 'PRODUCT=%s\nAVAILABLE=1\nPATH=%s\nSIZE=%s\nSHA256=%s\nVERSION=%s\n' \
+      "$product" "$repo" "$(wc -c < "$repo" | tr -d '[:space:]')" \
+      "$(sha256sum "$repo" | cut -d' ' -f1)" "$version")
+  else
+    product=$(getprop ro.product.name 2>/dev/null)
+    [ -n "$product" ] || product=$(getprop ro.product.device 2>/dev/null)
+    result=$(printf 'PRODUCT=%s\nAVAILABLE=0\n' "$product")
+  fi
+  emit "$result"
+}
+
+expert_import_start() {
+  token=$1
+  case "$token" in
+    x*[!A-Za-z0-9_-]*|x) emit "ERROR=invalid token"; return 1 ;;
+    x*) ;;
+    *) emit "ERROR=invalid token"; return 1 ;;
+  esac
+  mkdir -p "$RUNTIME_DIR/expert"
+  : > "$RUNTIME_DIR/expert/$token.img"
+  emit "READY=1"
+}
+
+expert_import_chunk() {
+  token=$1
+  data=$2
+  case "$token" in
+    x*[!A-Za-z0-9_-]*|x) emit "ERROR=invalid token"; return 1 ;;
+    x*) ;;
+    *) emit "ERROR=invalid token"; return 1 ;;
+  esac
+  [ -n "$data" ] || { emit "ERROR=empty chunk"; return 1; }
+  printf '%s' "$data" | base64 -d >> "$RUNTIME_DIR/expert/$token.img" || {
+    emit "ERROR=chunk write failed"; return 1;
+  }
+  emit "OK=1"
+}
+
+flash_abl_verified() {
+  target=$1
+  source=$2
+  [ -b "$target" ] && { [ -f "$source" ] || [ -b "$source" ]; } || return 1
+  [ "$target" != "$source" ] || return 0
+  if [ -b "$source" ]; then
+    source_size=$(blockdev --getsize64 "$source" 2>/dev/null) || return 1
+  else
+    source_size=$(wc -c < "$source" | tr -d '[:space:]')
+  fi
+  target_size=$(blockdev --getsize64 "$target" 2>/dev/null) || return 1
+  [ "$source_size" -gt 0 ] && [ "$source_size" -le "$target_size" ] || return 1
+  backup="$RUNTIME_DIR/expert/backup-$(basename "$target").img"
+  dd if="$target" of="$backup" bs=4M conv=fsync >> "$LOG_FILE" 2>&1 || return 1
+  blockdev --setrw "$target" >> "$LOG_FILE" 2>&1 || return 1
+  if ! dd if="$source" of="$target" bs=4M conv=fsync >> "$LOG_FILE" 2>&1; then
+    dd if="$backup" of="$target" bs=4M conv=fsync >> "$LOG_FILE" 2>&1
+    sync
+    return 1
+  fi
+  sync
+  readback="$RUNTIME_DIR/expert/readback-$(basename "$target").img"
+  blocks=$(((source_size + 4194303) / 4194304))
+  if ! dd if="$target" of="$readback" bs=4M count="$blocks" >> "$LOG_FILE" 2>&1; then
+    rm -f "$readback"
+    dd if="$backup" of="$target" bs=4M conv=fsync >> "$LOG_FILE" 2>&1
+    sync
+    return 1
+  fi
+  expected=$(sha256sum "$source" | cut -d' ' -f1)
+  actual=$(head -c "$source_size" "$readback" | sha256sum | cut -d' ' -f1)
+  rm -f "$readback"
+  if [ "$expected" = "$actual" ]; then
+    return 0
+  fi
+  dd if="$backup" of="$target" bs=4M conv=fsync >> "$LOG_FILE" 2>&1
+  sync
+  return 1
+}
+
+expert_start() {
+  mode=$1
+  source=$2
+  vuln=$3
+  expected_slot=$4
+  expected_source_sha=$5
+  expected_vuln_sha=$6
+  ensure_runtime
+  mkdir "$LOCK_DIR" 2>/dev/null || { emit "ALREADY_RUNNING=1"; return; }
+  echo $$ > "$PID_FILE"
+  trap cleanup_lock EXIT INT TERM HUP
+  : > "$LOG_FILE"
+  current_slot=$(detect_current_slot)
+  target_slot=$(other_slot "$current_slot")
+  [ "$mode" = efi ] || [ "$mode" = first ] || [ "$mode" = ota ] || { write_state error "$TEXT_EXPERT_BAD_MODE"; return; }
+  [ -n "$current_slot" ] && [ -n "$target_slot" ] || { write_state error "$TEXT_NO_SLOT"; return; }
+  [ "$current_slot" = "$expected_slot" ] || { write_state error "$TEXT_EXPERT_SLOT_CHANGED"; return; }
+  expert_path_allowed "$source" || { write_state error "$TEXT_EXPERT_BAD_PATCH"; return; }
+  [ "$(sha256sum "$source" | cut -d' ' -f1)" = "$expected_source_sha" ] || { write_state error "$TEXT_EXPERT_PATCH_CHANGED"; return; }
+  source_dir="$RUNTIME_DIR/expert/source"
+  write_state running "$TEXT_EXPERT_VALIDATE_PATCH"
+  analyze_abl "$source" "$source_dir" || { write_state error "$TEXT_PATCH_FAILED"; return; }
+  if [ "$mode" != efi ]; then
+    expert_path_allowed "$vuln" || { write_state error "$TEXT_EXPERT_BAD_VULN"; return; }
+    [ "$(sha256sum "$vuln" | cut -d' ' -f1)" = "$expected_vuln_sha" ] || { write_state error "$TEXT_EXPERT_VULN_CHANGED"; return; }
+    vuln_dir="$RUNTIME_DIR/expert/vulnerable"
+    analyze_abl "$vuln" "$vuln_dir" || { write_state error "$TEXT_EXPERT_BAD_VULN"; return; }
+    grep -q 'Warning: Failed to patch ABL GBL' "$vuln_dir/patch.log" && { write_state error "$TEXT_EXPERT_NO_GBL"; return; }
+  fi
+
+  write_state running "$TEXT_EXPERT_UPDATE_EFI"
+  update_efisp "$source" no
+  [ $? -eq 1 ] && { write_state error "$TEXT_EFISP_FLASH_FAILED"; return; }
+  if [ "$mode" = efi ]; then
+    write_state success "$TEXT_EXPERT_EFI_OK"
+    return
+  fi
+  mkdir -p "$RUNTIME_DIR/expert"
+  [ "$mode" = first ] && target="$BY_NAME_DIR/abl$current_slot" || target="$BY_NAME_DIR/abl$target_slot"
+  write_state running "$TEXT_EXPERT_FLASH_ABL $target"
+  flash_abl_verified "$target" "$vuln" || { write_state error "$TEXT_EXPERT_ABL_FAILED"; return; }
+  write_state success "$TEXT_EXPERT_DONE"
+}
+
+expert_run() {
+  ensure_runtime
+  [ -n "$(current_pid)" ] && { emit "ALREADY_RUNNING=1"; return; }
+  nohup sh "$0" expert-start "$1" "$2" "$3" "$4" "$5" "$6" >/dev/null 2>&1 &
+  sleep 1
+  if [ -n "$(current_pid)" ]; then
+    emit "STARTED=1"
+  else
+    state=$(read_line "$STATE_FILE")
+    [ -n "$state" ] && emit "FINISHED=$state" || emit "STARTED=0"
+  fi
+}
+
 case "$1" in
   status) print_status ;;
   flash) run_flash "$2" ;;
@@ -457,5 +694,11 @@ case "$1" in
   log) print_log ;;
   tail) tail_log ;;
   clear-log) clear_log ;;
+  expert-analyze) expert_analyze "$2" ;;
+  expert-repo) expert_repo ;;
+  expert-import-start) expert_import_start "$2" ;;
+  expert-import-chunk) expert_import_chunk "$2" "$3" ;;
+  expert-run) expert_run "$2" "$3" "$4" "$5" "$6" "$7" ;;
+  expert-start) expert_start "$2" "$3" "$4" "$5" "$6" "$7" ;;
   *) exit 1 ;;
 esac

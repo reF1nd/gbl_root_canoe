@@ -161,12 +161,10 @@ download_url() {
   fi
 }
 
-# Fetch an older ABL with the GBL vulnerability. Looks up the local module
-# bundle first, then the cloud. On success, leaves the image at
-# $RUNTIME_DIR/repo_abl.img and returns 0; otherwise returns 1.
-fetch_abl_from_repo() {
-  product=$(getprop ro.product.name 2>/dev/null)
-  [ -z "$product" ] && return 1
+# Fetch one product's older ABL. On success, leaves the image at
+# $RUNTIME_DIR/repo_abl.img and returns 0.
+fetch_abl_product() {
+  product=$1
   local_dir="$MODPATH/ablrepo/$product"
   if [ -f "$local_dir/abl.img" ]; then
     if [ -f "$local_dir/abl.sha256" ] && verify_sha256 "$local_dir/abl.img" "$local_dir/abl.sha256"; then
@@ -184,6 +182,16 @@ fetch_abl_from_repo() {
     fi
     ui_print "$T_ABLREPO_CLOUD_BAD"
   fi
+  return 1
+}
+
+# Prefer ro.product.name, then fall back to the exact ro.product.device value.
+fetch_abl_from_repo() {
+  product_name=$(getprop ro.product.name 2>/dev/null)
+  product_device=$(getprop ro.product.device 2>/dev/null)
+  [ -n "$product_name" ] && fetch_abl_product "$product_name" && return 0
+  [ -n "$product_device" ] && [ "$product_device" != "$product_name" ] && \
+    fetch_abl_product "$product_device" && return 0
   return 1
 }
 
@@ -286,7 +294,4 @@ while true; do
   fi
 done
 
-# ablrepo is bundled only for install-time ABL downgrade lookup. Remove it so
-# the device-side module dir (/data/adb/modules/fake_bl_efisp) stays lean after
-# installation; the cloud URL remains available for later re-downloads.
-rm -rf "$MODPATH/ablrepo"
+# Keep the model-matched ABL repo available to the expert WebUI.
