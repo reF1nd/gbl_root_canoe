@@ -253,6 +253,13 @@ button:disabled {
   font-weight: 700;
 }
 
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .primary-button {
   color: #fff8f1;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
@@ -271,6 +278,77 @@ button:disabled {
   background: rgba(217, 66, 43, 0.08);
   color: #6e2419;
   line-height: 1.6;
+}
+
+#startButton {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.expert-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.expert-source h3 {
+  margin: 0 0 8px;
+}
+
+.expert-source select,
+.expert-source .ghost-button {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.expert-source select {
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid rgba(80, 55, 34, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--ink);
+  font: inherit;
+}
+
+.analysis-box {
+  min-height: 150px;
+  margin: 12px 0 0;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #19120e;
+  color: #ecd9c7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.55 "JetBrains Mono", "Cascadia Code", monospace;
+}
+
+.plan-box {
+  min-height: 270px;
+}
+
+.mode-option {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(80, 55, 34, 0.08);
+}
+
+.mode-option input {
+  margin-top: 3px;
+  accent-color: var(--accent-strong);
+}
+
+.mode-option strong,
+.mode-option small {
+  display: block;
+}
+
+.mode-option small {
+  margin-top: 4px;
+  color: rgba(27, 20, 15, 0.58);
+  line-height: 1.45;
 }
 
 .table-wrap {
@@ -416,6 +494,10 @@ tbody tr:last-child td {
   }
 
   .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .expert-source-grid {
     grid-template-columns: 1fr;
   }
 

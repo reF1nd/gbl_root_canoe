@@ -163,12 +163,10 @@ download_url() {
   fi
 }
 
-# Fetch an older ABL with the GBL vulnerability. Looks up the local module
-# bundle first, then the cloud. On success, leaves the image at
-# $RUNTIME_DIR/repo_abl.img and returns 0; otherwise returns 1.
-fetch_abl_from_repo() {
-  product=$(getprop ro.product.name 2>/dev/null)
-  [ -z "$product" ] && return 1
+# Fetch one product's older ABL. On success, leaves the image at
+# $RUNTIME_DIR/repo_abl.img and returns 0.
+fetch_abl_product() {
+  product=$1
   local_dir="$MODPATH/ablrepo/$product"
   if [ -f "$local_dir/abl.img" ]; then
     if [ -f "$local_dir/abl.sha256" ] && verify_sha256 "$local_dir/abl.img" "$local_dir/abl.sha256"; then
@@ -189,6 +187,16 @@ fetch_abl_from_repo() {
   return 1
 }
 
+# Prefer ro.product.name, then fall back to the exact ro.product.device value.
+fetch_abl_from_repo() {
+  product_name=$(getprop ro.product.name 2>/dev/null)
+  product_device=$(getprop ro.product.device 2>/dev/null)
+  [ -n "$product_name" ] && fetch_abl_product "$product_name" && return 0
+  [ -n "$product_device" ] && [ "$product_device" != "$product_name" ] && \
+    fetch_abl_product "$product_device" && return 0
+  return 1
+}
+
 ui_print "$T_EFISP_TITLE"
 ui_print "$T_SOC"
 ui_print "$T_CHECK_EXP"
@@ -197,22 +205,27 @@ current_slot=$(detect_current_slot)
 # A module update on an existing BDS install must never enter the destructive
 # fresh-install path because of an accidental Volume Up press. A real boot.efi
 # is a stronger signal than the directory alone, which may be left by a partial
-# or failed install.
+# or failed install. Such an update takes the Volume Down branch below rather
+# than leaving early, so the installer finishes normally and the bundled ABL
+# repo stays available to expert mode.
+existing_install=no
 if grep -q " $PERSIST_MNT " /proc/mounts && [ -s "$EFISP_DIR/boot.efi" ]; then
   ui_print "$T_EXISTING_INSTALL"
-  ui_print "$T_DONE_NO"
-  rm -rf "$RUNTIME_DIR" "$MODPATH/ablrepo"
-  exit 0
+  existing_install=yes
+else
+  ui_print "$T_INSTALL_CHOICE"
+  ui_print "$T_VOL_UP"
+  ui_print "$T_VOL_DOWN"
+  ui_print "$T_TIP_YES"
+  ui_print "$T_TIP_NO"
 fi
 
-ui_print "$T_INSTALL_CHOICE"
-ui_print "$T_VOL_UP"
-ui_print "$T_VOL_DOWN"
-ui_print "$T_TIP_YES"
-ui_print "$T_TIP_NO"
-
 while true; do
-  keyevent=$(timeout 0.5 getevent -l 2>/dev/null)
+  if [ "$existing_install" = yes ]; then
+    keyevent=KEY_VOLUMEDOWN
+  else
+    keyevent=$(timeout 0.5 getevent -l 2>/dev/null)
+  fi
   if echo "$keyevent" | grep -q "KEY_VOLUMEUP"; then
     ui_print "$T_SEL_YES"
     if [ -z "$current_slot" ]; then
@@ -292,14 +305,11 @@ while true; do
     rm -rf $RUNTIME_DIR
     break
   elif echo "$keyevent" | grep -q "KEY_VOLUMEDOWN"; then
-    ui_print "$T_SEL_NO"
+    [ "$existing_install" = yes ] || ui_print "$T_SEL_NO"
     ui_print "$T_DONE_NO"
     rm -rf $RUNTIME_DIR
     break
   fi
 done
 
-# ablrepo is bundled only for install-time ABL downgrade lookup. Remove it so
-# the device-side module dir (/data/adb/modules/fake_bl_efisp) stays lean after
-# installation; the cloud URL remains available for later re-downloads.
-rm -rf "$MODPATH/ablrepo"
+# Keep the model-matched ABL repo available to the expert WebUI.
