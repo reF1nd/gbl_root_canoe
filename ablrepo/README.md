@@ -12,12 +12,14 @@ ablrepo/
     abl.sha256    # sha256 of abl.img (sha256sum output format)
 ```
 
-`<product>` is the value of `getprop ro.product.name` on the device, verbatim.
+`<product>` is an exact device identifier. Lookup first tries
+`getprop ro.product.name`, then falls back to `getprop ro.product.device`.
 
 ## Lookup order
 
 On first install, when the current ABL lacks the GBL vulnerability,
-`customize.sh` looks for an older ABL in this order:
+`customize.sh` tries `ro.product.name` and then `ro.product.device`. For each
+exact identifier it looks for an older ABL in this order:
 
 1. **Local** — bundled inside the module ZIP at `$MODPATH/ablrepo/<product>/`
 2. **Cloud** — `https://raw.githubusercontent.com/superturtlee/gbl_root_canoe/main/ablrepo/<product>/`

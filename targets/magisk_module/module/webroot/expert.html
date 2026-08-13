@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title id="pageTitle">假回锁 - 专家模式</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="page-shell">
+  <header class="hero-card">
+    <div>
+      <p class="eyebrow" id="lblKsuWebUI">KernelSU Module WebUI</p>
+      <h1 id="pageHeading">专家模式</h1>
+      <p class="hero-copy" id="heroDesc">手动选择 ABL，分析 GBL 漏洞，并选择 EFI 或槽位刷写方案。</p>
+    </div>
+    <div class="hero-meta">
+      <span class="chip" id="stateChip">等待检测</span>
+      <span class="chip chip-warn" id="slotChip">槽位未知</span>
+      <a class="ghost-button button-link" href="index.html" id="backLink">返回普通模式</a>
+    </div>
+  </header>
+
+  <main class="grid-layout">
+    <section class="panel stats-panel">
+      <div class="panel-heading"><h2 id="lblSlotStatus">槽位状态</h2><button class="ghost-button" id="refreshButton" type="button">刷新</button></div>
+      <div class="stats-grid">
+        <article class="stat-card"><span class="stat-label" id="lblCurrentSlot">当前槽位</span><strong class="stat-value" id="currentSlot">-</strong></article>
+        <article class="stat-card accent-card"><span class="stat-label" id="lblTargetSlot">非活动槽</span><strong class="stat-value" id="targetSlot">-</strong></article>
+        <article class="stat-card"><span class="stat-label" id="lblProduct">机型</span><strong class="stat-value stat-small" id="product">-</strong></article>
+        <article class="stat-card"><span class="stat-label" id="lblTaskStatus">任务状态</span><strong class="stat-value stat-small" id="taskMessage">等待操作</strong></article>
+      </div>
+    </section>
+
+    <section class="panel map-panel">
+      <div class="panel-heading"><h2 id="lblSources">ABL 输入</h2><span class="caption" id="repoCaption">Repo 检测中</span></div>
+      <div class="expert-source-grid">
+        <article class="expert-source">
+          <h3 id="lblPatchSource">Patch 源 ABL</h3>
+          <p class="caption" id="patchHint">用于生成 boot.efi；不要求自身有 GBL 漏洞。</p>
+          <select id="patchSelect"></select>
+          <input id="patchFile" type="file" accept=".img,.bin" hidden />
+          <button class="ghost-button" id="patchFileButton" type="button">选择文件</button>
+          <pre class="analysis-box" id="patchAnalysis">未选择</pre>
+        </article>
+        <article class="expert-source">
+          <h3 id="lblVulnSource">漏洞 ABL</h3>
+          <p class="caption" id="vulnHint">仅首次应用假锁或 OTA 槽位准备需要。</p>
+          <select id="vulnSelect"></select>
+          <input id="vulnFile" type="file" accept=".img,.bin" hidden />
+          <button class="ghost-button" id="vulnFileButton" type="button">选择文件</button>
+          <pre class="analysis-box" id="vulnAnalysis">未选择</pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel stats-panel">
+      <div class="panel-heading"><h2 id="lblMode">操作方案</h2></div>
+      <label class="mode-option"><input type="radio" name="mode" value="efi" checked /><span><strong id="modeEfi">仅更新 EFI</strong><small id="modeEfiHint">不写 ABL，仅更新 persist/efisp 和 raw efisp。</small></span></label>
+      <label class="mode-option"><input type="radio" name="mode" value="first" /><span><strong id="modeFirst">首次应用假锁</strong><small id="modeFirstHint">写入活动槽 ABL + EFI；高风险。</small></span></label>
+      <label class="mode-option"><input type="radio" name="mode" value="ota" /><span><strong id="modeOta">OTA 槽位准备</strong><small id="modeOtaHint">写入非活动槽 ABL + EFI。</small></span></label>
+      <p class="warning-copy" id="warning">这是高风险 bootloader 操作。开始前请核对机型、槽位、SHA-256 和 GBL 检测结果。</p>
+      <button class="primary-button" id="startButton" type="button">确认并执行</button>
+    </section>
+
+    <section class="panel map-panel">
+      <div class="panel-heading"><h2 id="lblPlan">执行计划</h2><span class="caption" id="planState">等待输入</span></div>
+      <pre class="analysis-box plan-box" id="planOutput">请选择两个输入并完成分析。</pre>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="panel-heading"><h2 id="lblLog">实时日志</h2><span class="caption" id="lblAutoPoll">自动轮询最近 200 行</span></div>
+      <pre id="logOutput">等待日志输出...</pre>
+    </section>
+  </main>
+</div>
+
+<div class="modal-backdrop hidden" id="confirmModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <p class="eyebrow" id="modalRisk">高风险操作</p>
+    <h2 id="modalTitle">确认执行</h2>
+    <p id="confirmText">确认按计划执行？</p>
+    <div class="modal-actions">
+      <button class="ghost-button" id="cancelConfirmButton" type="button">取消</button>
+      <button class="primary-button" id="nextConfirmButton" type="button">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<script src="expert.js"></script>
+</body>
+</html>
