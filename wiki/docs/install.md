@@ -34,7 +34,11 @@ The ABL on the `abl` partition must contain the **GBL vulnerability** so it load
 2. Reboot to **Recovery** and **format data**.
    > ⚠️ The first reboot may crash — simply retry.
 3. Reinstall the module and press **Vol- (NO)** to install the OTA-update patch.
-4. Reboot the system.
+4. On supported KSU installations, no additional reboot is needed. Wait for the installer to finish, then return to the module page to open WebUI; manually refreshing the list is not a required step. The manager's generic reboot button is optional.
+
+Selecting NO only installs module files. It does not automatically update the device's BDS/Tools or flash ABL. The Recovery/format procedure when selecting YES for first setup is unchanged.
+
+Immediate activation checks boot mode, the expected directory layout and a file-only payload, not a KSU fork or executable name. Unsupported paths, mounted module trees and boot hooks retain the staged installation; the install console reports a specific reason. Installation refuses to replace files during a flash task; wait for it to finish and reinstall. WebUI and its matching backend are published during installation; only pending-update cleanup runs afterward. Cleanup tracks the installer shell and the ancestor invoking `module install` for this ZIP. If completion cannot be confirmed, files can still be activated but the pending-update marker and backup are retained. Some managers may then still block WebUI until reboot. Check the installation output and `/data/adb/modules/fake_bl_efisp/tmp/live-install.log`. The module cannot force every manager version to refresh its interface; refreshing a stale list is a troubleshooting step, not part of file activation.
 
 ### 3.2 After an OTA
 

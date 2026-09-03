@@ -24,9 +24,9 @@ sleep 1
 
 cat > "$MODPATH/module.prop" <<EOF
 id=fake_bl_efisp
-version=5.0
-versionCode=12
-author=zaomi
+version=6.2.192-reF1nd
+versionCode=16
+author=caomi
 EOF
 
 if [ "$LANG" = "zh" ]; then
@@ -48,7 +48,7 @@ if [ "$LANG" = "zh" ]; then
   T_VOL_UP="音量上为是（全新安装，需要格式化）"
   T_VOL_DOWN="音量下为否（如果之前安装过一次假回锁或者刚刚首次安装并格式化，建议选否）"
   T_TIP_YES="如果选择是，将会布置 efisp 启动项到 persist 并刷入 BDS 到 efisp，然后重启recovery 进行格式化，格式化后请安装一次这个模块来完成安装，这时选否"
-  T_TIP_NO="如果选择否，将会安装OTA更新补丁，每次OTA更新后都需要打开这个模块来安装补丁，来保留BL版本，安装完成后重启系统即可"
+  T_TIP_NO="如果选择否，仅安装OTA更新辅助模块；每次OTA更新后需在重启前打开WebUI应用补丁。支持的KSU环境下，模块安装后无需重启即可使用"
   T_SEL_YES="选择了是，正在安装包含补丁的efisp"
   T_NO_SLOT="无法识别当前槽位，已中止安装"
   T_PATCH_FAIL="补丁应用失败，已中止安装"
@@ -74,7 +74,12 @@ if [ "$LANG" = "zh" ]; then
   T_FLASH_BDS="正在刷入 BDS 到 efisp"
   T_DONE_YES="安装完成，请重启到recovery进行格式化，格式化后请安装一次这个模块来完成安装，这时选否"
   T_SEL_NO="选择了否，正在安装OTA更新模块"
-  T_DONE_NO="安装完成，请重启系统即可"
+  T_DONE_NO="模块文件安装完成，请按管理器提示完成激活"
+  T_DONE_LIVE="安装完成。返回模块页即可打开WebUI。"
+  T_LIVE_PARTIAL="模块文件已即时更新，但无法确认安装器收尾，保留待重启标记。若管理器仍限制WebUI入口，请重启后使用"
+  T_LIVE_FALLBACK="当前环境无法安全即时激活，已保留普通安装方式；重启后使用新版WebUI"
+  T_LIVE_BUSY="模块任务正在运行，请等待完成后重新安装；未替换正在使用的文件"
+  T_LIVE_FAIL="即时激活失败，请查看模块 tmp/live-install.log 并重新安装"
 else
   T_VERIFY="- Verifying device model"
   T_DEVICE_OK="- Device verified:"
@@ -86,7 +91,7 @@ else
   T_VOL_UP="Vol+ = YES (Fresh install, requires format)"
   T_VOL_DOWN="Vol- = NO (If installed before or just formatted)"
   T_TIP_YES="If YES: efisp boot entries placed on persist and BDS flashed to efisp, reboot to recovery and format data, then reinstall this module and select NO"
-  T_TIP_NO="If NO: OTA patch will be installed, after each OTA, flash this module again to keep BL version"
+  T_TIP_NO="If NO: install only the OTA helper. After each OTA, apply the patch in WebUI before rebooting. Supported KSU installations can use the module without a reboot"
   T_SEL_YES="Selected YES, installing patched efisp"
   T_NO_SLOT="Failed to detect current slot, abort"
   T_PATCH_FAIL="Failed to apply patch, abort"
@@ -112,7 +117,12 @@ else
   T_FLASH_BDS="Flashing BDS to efisp"
   T_DONE_YES="Install complete. Reboot to recovery and format data, then reinstall module and choose NO"
   T_SEL_NO="Selected NO, installing OTA update patch"
-  T_DONE_NO="Install complete, please reboot"
+  T_DONE_NO="Module files installed; follow the manager's activation instructions"
+  T_DONE_LIVE="Installation complete. Return to the module page to open WebUI."
+  T_LIVE_PARTIAL="Module files activated, but installer completion is unknown; keeping the pending-update marker. Reboot if your manager still blocks WebUI"
+  T_LIVE_FALLBACK="Safe immediate activation is unavailable here. Keeping the normal staged install; use the new WebUI after rebooting"
+  T_LIVE_BUSY="A module task is running. Wait for it to finish and reinstall; files in use were not replaced"
+  T_LIVE_FAIL="Immediate activation failed. Check the module's tmp/live-install.log and reinstall"
 fi
 
 ui_print "$T_VERIFY"
@@ -288,8 +298,21 @@ while true; do
     break
   elif echo "$keyevent" | grep -q "KEY_VOLUMEDOWN"; then
     ui_print "$T_SEL_NO"
-    ui_print "$T_DONE_NO"
     rm -rf $RUNTIME_DIR
+    if [ "${BOOTMODE:-}" = true ]; then
+      BOOTMODE="$BOOTMODE" LIVE_INSTALL_ZIP="${ZIPFILE:-}" \
+        sh "$MODPATH/bin/live_install.sh" prepare "$MODPATH" "$$" "$PPID"
+      live_result=$?
+      case "$live_result" in
+        0) ui_print "$T_DONE_LIVE" ;;
+        2) ui_print "$T_LIVE_FALLBACK" ;;
+        3) abort "$T_LIVE_BUSY" ;;
+        4) ui_print "$T_LIVE_PARTIAL" ;;
+        *) abort "$T_LIVE_FAIL" ;;
+      esac
+    else
+      ui_print "$T_DONE_NO"
+    fi
     break
   fi
 done
