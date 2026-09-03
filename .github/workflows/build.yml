@@ -23,6 +23,9 @@ jobs:
     - name: Test menu input
       run: sh submodules/uefi/tests/run_menu_input_tests.sh
 
+    - name: Test rebootless module activation
+      run: python3 targets/magisk_module/tests/test_live_install.py
+
     - name: Setup Variables
       run: |
         echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
