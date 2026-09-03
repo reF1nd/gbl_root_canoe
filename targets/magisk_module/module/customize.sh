@@ -24,9 +24,9 @@ sleep 1
 
 cat > "$MODPATH/module.prop" <<EOF
 id=fake_bl_efisp
-version=5.0
-versionCode=12
-author=zaomi
+version=6.2.192-reF1nd
+versionCode=14
+author=caomi
 EOF
 
 if [ "$LANG" = "zh" ]; then
