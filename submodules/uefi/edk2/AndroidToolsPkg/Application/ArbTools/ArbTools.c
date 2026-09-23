@@ -197,17 +197,17 @@ AtConfirmReset5x (
 {
   UINTN  Step;
   AT_KEY Key;
+  CHAR16 Detail[32];
 
   for (Step = 1; Step <= 5; Step++) {
     /* Enforce >=1s since the previous confirmation and drop any key held over
      * from it, so each confirm is a separate deliberate action. */
     gBS->Stall (1000000);  /* 1 second */
-    gST->ConIn->Reset (gST->ConIn, FALSE);
+    MenuInputFlush ();
 
-    AtUiBeginScreen (L"Reset ARB Index", NULL);
-    Print (L"WARNING: this writes to the TEE and may lose keys.\r\n");
-    Print (L"\r\n   Confirm %u/5\r\n", (UINT32)Step);
-    Print (L"\r\nPower = confirm   Vol+/- = cancel\r\n");
+    UnicodeSPrint (Detail, sizeof (Detail), L"   Confirm %u/5", (UINT32)Step);
+    AtUiDrawConfirmation (L"Reset ARB Index",
+                          L"WARNING: this writes to the TEE and may lose keys.", Detail);
 
     Key = AtUiWaitForKey (0);
     if (Key != AtKeySelect) {

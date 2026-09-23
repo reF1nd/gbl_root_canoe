@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-3-Clause
+[Defines]
+  INF_VERSION     = 0x00010006
+  BASE_NAME       = MenuInputLib
+  FILE_GUID       = 4C81B916-4B78-480D-A839-D287BD553561
+  MODULE_TYPE     = BASE
+  VERSION_STRING  = 1.0
+  LIBRARY_CLASS   = MenuInputLib
+
+[Sources]
+  MenuInputLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  AndroidToolsPkg/AndroidToolsPkg.dec
+
+[LibraryClasses]
+  TimerLib
+  UefiBootServicesTableLib

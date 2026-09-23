@@ -96,25 +96,61 @@ SfbMsdEnsureUsbStack (VOID)
  * Discard anything already queued. The chooser screen that precedes the
  * export hands over with the operator's confirm keystroke, and sometimes its
  * trailing event, still in the queue; a cancel test that accepted these would
- * abort the session before the host ever saw the device.
+ * abort the session before the host ever saw the device. Flushing through
+ * MenuInputLib also resets the menu filter, so a Volume Down still held when
+ * the session ends cannot move the cursor of the chooser shown next.
  */
 STATIC
 VOID
 SfbMsdDrainKeys (VOID)
 {
-  EFI_INPUT_KEY Key;
-  UINTN         Drained = 0;
+  MenuInputFlush ();
+}
 
-  if (gST == NULL || gST->ConIn == NULL) {
-    return;
+/*
+ * The session page as one measured block, like the menus leading to it. The
+ * detail and size rows clip instead of wrapping so the block keeps its height.
+ */
+STATIC
+VOID
+SfbMsdDrawSession (IN CONST CHAR16 *Title,
+                   IN CONST CHAR16 *Detail OPTIONAL,
+                   IN UINT64       Bytes)
+{
+  CONST CHAR16 *Subtitle = L"The host may now mount the disk.";
+  CONST CHAR16 *Hint = L"  Volume Down ends this session.";
+  CONST CHAR16 *Footer = L"Volume Down: stop export";
+  CHAR16       Size[64];
+  BOOLEAN      HasDetail = (BOOLEAN)(Detail != NULL && Detail[0] != L'\0');
+  UINTN        Columns;
+
+  Size[0] = L'\0';
+  if (Bytes != 0) {
+    UnicodeSPrint (Size, sizeof (Size), L"  Size: %Lu bytes (%Lu MiB)",
+                   Bytes, Bytes / (1024 * 1024));
   }
-  while (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
-    Drained++;
+
+  MenuConsoleClear ();
+  Columns = MAX (StrLen (Title), StrLen (Subtitle));
+  Columns = MAX (Columns, StrLen (Hint));
+  Columns = MAX (Columns, StrLen (Footer));
+  Columns = MAX (Columns, StrLen (Size));
+  if (HasDetail) {
+    Columns = MAX (Columns, 2 + StrLen (Detail));
   }
-  if (Drained != 0) {
-    DEBUG ((EFI_D_VERBOSE, "SFB: msc drained %u stale keys\n",
-            (UINT32)Drained));
+  /* Title, subtitle, blank, optional detail/size, blank, hint, blank, footer. */
+  SfbBeginScreen (Title, Subtitle,
+                  7 + (HasDetail ? 1 : 0) + ((Size[0] != L'\0') ? 1 : 0),
+                  Columns);
+  if (HasDetail) {
+    MenuConsolePrintLine (L"  %s", Detail);
   }
+  if (Size[0] != L'\0') {
+    MenuConsolePrintLine (L"%s", Size);
+  }
+  MenuConsolePrint (L"\r\n");
+  MenuConsolePrintLine (L"%s", Hint);
+  SfbEndScreen (Footer);
 }
 
 /*
@@ -186,17 +222,8 @@ SfbUsbMsdExportBlkIo (IN EFI_BLOCK_IO_PROTOCOL *BlkIo,
    * confirm keystroke is still queued here, so the screen must be visible
    * before the drain hands control to the export loop.
    */
-  SfbBeginScreen ((Title != NULL) ? Title : L"USB Mass Storage",
-                  L"The host may now mount the disk.");
-  if (Detail != NULL && Detail[0] != L'\0') {
-    Print (L"  %s\r\n", Detail);
-  }
-  if (Bytes != 0) {
-    Print (L"  Size: %Lu bytes (%Lu MiB)\r\n", Bytes, Bytes / (1024 * 1024));
-  }
-  Print (L"\r\n");
-  Print (L"  Volume Down ends this session.\r\n");
-  SfbEndScreen (L"Volume Down: stop export");
+  SfbMsdDrawSession ((Title != NULL) ? Title : L"USB Mass Storage", Detail,
+                     Bytes);
 
   /* Nothing queued may reach the cancel test. */
   SfbMsdDrainKeys ();

@@ -296,10 +296,10 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
      * before the menu takes input, then run the menu. It only returns TRUE when
      * the user picked fastboot; FALSE means the menu is done. Fastboot can be
      * exited back to the menu (its "Exit to menu" row or "exit" from the host),
-     * so the pair runs as a loop.
+     * so the pair runs as a loop. The power-on hold is only needed once.
      */
+    SfbShowEnteringMenu ();
     while (TRUE) {
-      SfbShowEnteringMenu ();
       if (!SfbRunBootMenu ()) {
         Status = EFI_SUCCESS;
         goto stack_guard_update_default;
@@ -312,8 +312,10 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
         DEBUG ((EFI_D_ERROR, "Failed to Launch Fastboot App: %d\n", Status));
         goto stack_guard_update_default;
       }
-      /* Fastboot exited back to the menu; loop around and show it again. */
+      /* Fastboot exited back to the menu; loop around and show it again. Drop
+       * input carried across the fastboot boundary instead of holding again. */
       DEBUG ((EFI_D_INFO, "Fastboot exited to the boot menu\n"));
+      MenuInputFlush ();
     }
   }
 

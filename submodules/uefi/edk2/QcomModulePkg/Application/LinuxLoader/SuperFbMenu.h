@@ -14,6 +14,8 @@
 
 #include <Uefi.h>
 #include <Protocol/BlockIo.h>
+#include <Library/MenuConsoleLib.h>
+#include <Library/MenuInputLib.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/SimpleFileSystem.h>
 
@@ -428,18 +430,13 @@ VOID
 SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen);
 
 /*
- * Clear the console, show "Entering <What>", and hold for one second so a
- * volume key held from the parent screen is released before the submenu starts
- * taking input. The input buffer is drained afterwards so that held key does
- * not leak in as a spurious keypress.
+ * Submenu boundary hooks, called on entering a submenu and on leaving one
+ * through Back. MenuInputLib's cross-page power-key guard already covers both
+ * transitions, so they neither draw, pause nor flush input.
  */
 VOID
 SfbShowEnteringScreen (IN CONST CHAR16 *What);
 
-/*
- * Debounce a menu exit (Back): hold briefly and drain the input queue so the
- * confirming key cannot act on the parent menu.
- */
 VOID
 SfbDebounceMenuExit (VOID);
 
@@ -450,10 +447,12 @@ SfbWaitForKey (IN UINT32 TimeoutMs);
 /* ---- shared console helpers (SuperFbMenu.c) ----------------------------- */
 
 /* Rows of list content a screen shows before it starts scrolling. */
-#define SFB_VISIBLE_ROWS  12
+#define SFB_VISIBLE_ROWS  MenuConsoleVisibleRows (10, 12)
 
+/* After MenuConsoleClear, position a measured page and draw its heading. */
 VOID
-SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle OPTIONAL);
+SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle OPTIONAL,
+                IN UINTN ContentRows, IN UINTN ContentColumns);
 
 VOID
 SfbEndScreen (IN CONST CHAR16 *Footer);

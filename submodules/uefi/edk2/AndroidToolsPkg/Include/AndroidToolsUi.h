@@ -11,6 +11,8 @@
 #define __ANDROID_TOOLS_UI_H__
 
 #include <Uefi.h>
+#include <Library/MenuConsoleLib.h>
+#include <Library/MenuInputLib.h>
 
 typedef enum {
   AtKeyTimeout = 0,
@@ -20,7 +22,7 @@ typedef enum {
 } AT_KEY;
 
 /* Rows of list content a screen shows before it starts scrolling. */
-#define AT_VISIBLE_ROWS  12
+#define AT_VISIBLE_ROWS  MenuConsoleVisibleRows (8, 12)
 
 /**
   Announce the menu and wait for the launching key to be released, then drain
@@ -42,11 +44,21 @@ AtUiWaitForKey (
   IN UINT32 TimeoutMs
   );
 
-/** Clear the screen and print a title (and optional subtitle). **/
+/** After Clear, center the measured page and print its heading. **/
 VOID
 AtUiBeginScreen (
   IN CONST CHAR16 *Title,
-  IN CONST CHAR16 *Subtitle OPTIONAL
+  IN CONST CHAR16 *Subtitle OPTIONAL,
+  IN UINTN ContentRows,
+  IN UINTN ContentColumns
+  );
+
+/** Draw a centered confirmation page without consuming input or confirming. **/
+VOID
+AtUiDrawConfirmation (
+  IN CONST CHAR16 *Title,
+  IN CONST CHAR16 *Warning,
+  IN CONST CHAR16 *Detail OPTIONAL
   );
 
 /** Print a footer line. **/

@@ -57,9 +57,59 @@ typedef struct {
 /* ---- tiny generic list chooser ------------------------------------------- */
 
 /*
- * Draw Rows[0..Count) plus a trailing "Back" row and service input. Returns
- * the chosen row index, or -1 when the user picked Back (or the list is
- * empty). Scroll handling matches the boot menu.
+ * Draw Rows[0..Count) plus a trailing "Back" row as one measured block, like
+ * every other boot-menu page. The width covers rows outside the visible window
+ * too, so scrolling cannot shift the block sideways.
+ */
+STATIC
+VOID
+SfbAdvDrawChooser (IN CONST CHAR16 *Title,
+                   IN CONST CHAR16 *Subtitle OPTIONAL,
+                   IN CONST CHAR16 (*Rows)[SFB_ADV_ROW_CHARS],
+                   IN UINTN        Count,
+                   IN UINTN        Cursor)
+{
+  CONST CHAR16 *Footer = L"Vol Up/Down: move   Power: select";
+  UINTN        Total = Count + 1;
+  UINTN        Visible;
+  UINTN        Start;
+  UINTN        Last;
+  UINTN        Index;
+  UINTN        Columns;
+  BOOLEAN      Overflow;
+
+  MenuConsoleClear ();
+  Visible = MIN (Total, SFB_VISIBLE_ROWS);
+  Overflow = (BOOLEAN)(Total > Visible);
+  Columns = MAX (StrLen (Title), StrLen (Footer));
+  if (Subtitle != NULL) {
+    Columns = MAX (Columns, StrLen (Subtitle));
+  }
+  for (Index = 0; Index < Count; Index++) {
+    Columns = MAX (Columns, 4 + StrLen (Rows[Index]));
+  }
+  SfbBeginScreen (Title, Subtitle, Visible + (Subtitle != NULL ? 5 : 4) +
+                  (Overflow ? 1 : 0), Columns);
+
+  Start = SfbWindowStart (Cursor, Total, Visible);
+  Last = MIN (Total, Start + Visible);
+  for (Index = Start; Index < Last; Index++) {
+    SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ",
+                (Index < Count) ? Rows[Index] : L"Back");
+  }
+  if (Last < Total) {
+    MenuConsolePrint (L"    ... %u more\r\n", (UINT32)(Total - Last));
+  } else if (Overflow) {
+    /* Keep the footer and block origin still on the final scroll window. */
+    MenuConsolePrint (L"\r\n");
+  }
+  SfbEndScreen (Footer);
+}
+
+/*
+ * Show the chooser and service input. Returns the chosen row index, or -1
+ * when the user picked Back (or the list is empty). Scroll handling matches
+ * the boot menu.
  */
 STATIC
 INTN
@@ -71,35 +121,18 @@ SfbAdvChoose (IN CONST CHAR16 *Title,
 {
   UINTN   Cursor = (StartCursor < Count) ? StartCursor : 0;
   UINTN   Total = Count + 1;
-  UINTN   Start;
-  UINTN   Index;
-  UINTN   Last;
   SFB_KEY Key;
 
   while (TRUE) {
-    SfbBeginScreen (Title, Subtitle);
-
-    Start = SfbWindowStart (Cursor, Total, SFB_VISIBLE_ROWS);
-    Last = Start + SFB_VISIBLE_ROWS;
-    if (Last > Total) {
-      Last = Total;
-    }
-
-    for (Index = Start; Index < Last; Index++) {
-      if (Index < Count) {
-        SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Rows[Index]);
-      } else {
-        SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", L"Back");
-      }
-    }
-    if (Last < Total) {
-      Print (L"    ... %u more\r\n", (UINT32)(Total - Last));
-    }
-    SfbEndScreen (L"Vol Up/Down: move   Power: select");
+    SfbAdvDrawChooser (Title, Subtitle, Rows, Count, Cursor);
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
       SfbMoveCursor (&Cursor, Total, Key);
+      continue;
+    }
+    /* Errors and timeouts are not a confirmation. */
+    if (Key != SfbKeySelect) {
       continue;
     }
     if (Cursor < Count) {

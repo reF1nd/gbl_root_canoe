@@ -86,6 +86,7 @@
 	SuperFbUsbMsd.c
 
 [Packages]
+	AndroidToolsPkg/AndroidToolsPkg.dec
 	ArmPkg/ArmPkg.dec
 	MdePkg/MdePkg.dec
 	EmbeddedPkg/EmbeddedPkg.dec
@@ -96,6 +97,8 @@
 	Ext4Pkg/Ext4Pkg.dec
 
 [LibraryClasses]
+  MenuInputLib
+	MenuConsoleLib
 	DxeServicesTableLib
 	UefiLib
 	UefiApplicationEntryPoint
