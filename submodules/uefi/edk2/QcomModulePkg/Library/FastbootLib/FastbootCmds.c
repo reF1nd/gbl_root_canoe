@@ -1535,6 +1535,9 @@ ReenumeratePartTable (VOID)
 }
 
 
+STATIC BOOLEAN
+FastbootResolveFlashPartition (CHAR16 *PartitionName, UINTN PartitionMaxSize);
+
 /* Handle Flash Command */
 STATIC VOID
 CmdFlash (IN CONST CHAR8 *arg, IN VOID *data, IN UINT32 sz)
@@ -1632,6 +1635,15 @@ CmdFlash (IN CONST CHAR8 *arg, IN VOID *data, IN UINT32 sz)
       }
     }
     FastbootFail ("Error Updating partition Table\n");
+    goto out;
+  }
+
+  /* Resolve once before dispatch so raw and sparse writes (including the
+   * sparse worker) use the same target even without host-side slot support.
+   */
+  if (!FastbootResolveFlashPartition (PartitionName,
+                                      ARRAY_SIZE (PartitionName))) {
+    FastbootFail ("Cannot resolve current slot; specify partition suffix");
     goto out;
   }
 
@@ -2327,6 +2339,99 @@ FastbootGetVarInfo (CONST CHAR8 *Payload)
   WaitForTransferComplete ();
 }
 
+/* The host can add the slot suffix after querying has-slot and current-slot.
+ * Match complete GPT names so explicit suffixes and unslotted partitions
+ * remain literal targets.
+ */
+STATIC BOOLEAN
+FastbootPartitionHasSlot (CONST CHAR8 *Name)
+{
+  CHAR16 PartitionName[ARRAY_SIZE (PtnEntries[0].PartEntry.PartitionName)];
+  UINTN Length = AsciiStrLen (Name);
+
+  if (Length == 0 || Length > ARRAY_SIZE (PartitionName) - 3) {
+    return FALSE;
+  }
+
+  AsciiStrToUnicodeStr (Name, PartitionName);
+  if (GetPartitionIndex (PartitionName) != INVALID_PTN) {
+    return FALSE;
+  }
+
+  PartitionName[Length] = L'_';
+  PartitionName[Length + 1] = L'a';
+  PartitionName[Length + 2] = L'\0';
+  if (GetPartitionIndex (PartitionName) == INVALID_PTN) {
+    return FALSE;
+  }
+
+  PartitionName[Length + 1] = L'b';
+  return GetPartitionIndex (PartitionName) != INVALID_PTN;
+}
+
+STATIC CONST CHAR8 *
+FastbootCurrentSlot (VOID)
+{
+  INT32 BootA = GetPartitionIndex (L"boot_a");
+  INT32 BootB = GetPartitionIndex (L"boot_b");
+  UINT64 PriorityA;
+  UINT64 PriorityB;
+  UINT64 AttributesA;
+  UINT64 AttributesB;
+
+  if (BootA == INVALID_PTN || BootB == INVALID_PTN) {
+    return NULL;
+  }
+
+  /* Read the existing active/priority bits only. A getvar must not reset
+   * retry counters, mark a slot bootable, or update the partition table.
+   */
+  AttributesA = PtnEntries[BootA].PartEntry.Attributes;
+  AttributesB = PtnEntries[BootB].PartEntry.Attributes;
+  PriorityA = (AttributesA & PART_ATT_ACTIVE_VAL) ?
+              (AttributesA & PART_ATT_PRIORITY_VAL) : 0;
+  PriorityB = (AttributesB & PART_ATT_ACTIVE_VAL) ?
+              (AttributesB & PART_ATT_PRIORITY_VAL) : 0;
+  if (PriorityA > PriorityB) {
+    return "a";
+  }
+  if (PriorityB > PriorityA) {
+    return "b";
+  }
+
+  /* Missing or equally ranked active slots do not identify a safe default. */
+  return NULL;
+}
+
+STATIC BOOLEAN
+FastbootResolveFlashPartition (CHAR16 *PartitionName, UINTN PartitionMaxSize)
+{
+  CHAR8 Name[ARRAY_SIZE (PtnEntries[0].PartEntry.PartitionName)];
+  UINTN Length = StrLen (PartitionName);
+  CONST CHAR8 *Slot;
+
+  /* Leave literal and unknown names to the existing partition lookup.
+   * Only a verified A/B pair may be resolved automatically.
+   */
+  if (Length >= ARRAY_SIZE (Name)) {
+    return TRUE;
+  }
+  UnicodeStrToAsciiStr (PartitionName, Name);
+  if (!FastbootPartitionHasSlot (Name)) {
+    return TRUE;
+  }
+
+  Slot = FastbootCurrentSlot ();
+  if (Slot == NULL || PartitionMaxSize < Length + 3) {
+    return FALSE;
+  }
+
+  PartitionName[Length] = L'_';
+  PartitionName[Length + 1] = (CHAR16)Slot[0];
+  PartitionName[Length + 2] = L'\0';
+  return TRUE;
+}
+
 STATIC VOID CmdGetVarAll (VOID)
 {
   FASTBOOT_VAR *Var;
@@ -2341,10 +2446,32 @@ STATIC VOID
 CmdGetVar (CONST CHAR8 *Arg, VOID *Data, UINT32 Size)
 {
   FASTBOOT_VAR *Var;
+  CONST CHAR8 *CurrentSlot;
   CHAR16 PartNameUniStr[MAX_GPT_NAME_SIZE];
   CHAR8 *Token = AsciiStrStr (Arg, "partition-");
 
   UpdateGetVarVariable ();
+
+  if (!AsciiStrnCmp (Arg, "has-slot:", AsciiStrLen ("has-slot:"))) {
+    FastbootOkay (FastbootPartitionHasSlot (Arg + AsciiStrLen ("has-slot:")) ?
+                  "yes" : "no");
+    return;
+  }
+
+  if (!AsciiStrCmp (Arg, "current-slot")) {
+    CurrentSlot = FastbootCurrentSlot ();
+    if (CurrentSlot == NULL) {
+      FastbootFail ("Cannot determine current slot; specify partition suffix");
+    } else {
+      FastbootOkay (CurrentSlot);
+    }
+    return;
+  }
+
+  if (!AsciiStrCmp (Arg, "slot-count")) {
+    FastbootOkay (FastbootPartitionHasSlot ("boot") ? "2" : "0");
+    return;
+  }
 
   if (!(AsciiStrCmp ("all", Arg))) {
     CmdGetVarAll ();
