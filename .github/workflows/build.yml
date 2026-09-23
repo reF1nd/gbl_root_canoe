@@ -17,6 +17,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y lld clang llvm uuid-dev liblzma-dev mingw-w64 zip
 
+    - name: Test menu renderer
+      run: sh submodules/uefi/tests/run_menu_console_tests.sh
+
+    - name: Test menu input
+      run: sh submodules/uefi/tests/run_menu_input_tests.sh
+
     - name: Setup Variables
       run: |
         echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV

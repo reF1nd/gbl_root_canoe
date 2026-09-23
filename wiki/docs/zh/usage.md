@@ -66,4 +66,4 @@
 
 ## 注意事项
 
-- 开启 OEM 解锁且开机出现小白字时，**必须按音量减（Volume Down）键才能进入 Superfastboot 模式。**
+- 开启 OEM 解锁时，**开机按住音量上（Volume Up）键进入启动菜单，再选择 Enter Fastboot 进入 Superfastboot 模式。**

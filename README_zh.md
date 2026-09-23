@@ -72,7 +72,7 @@
 重启进行 OTA 更新前，使用模块 WebUI 刷写以保留旧版本 ABL。“更新 efisp”默认开启；跨版本升级时请保持开启，否则可能卡一屏。
 
 ### 4. superfastboot 使用方法
-开启 OEM 解锁且开机出现小白字时，按 **音量减**（Volume Down）键进入 Superfastboot 模式（即 BDS）。常用命令包括：
+开启 OEM 解锁时，开机按住 **音量上**（Volume Up）键进入启动菜单，再选择 **Enter Fastboot** 进入 Superfastboot 模式。常用命令包括：
 - **临时启动 EFI 文件（无需刷入）**：`fastboot boot xxx.efi`
 - **锁定与解锁 (BL 锁相关)**：
   - 锁定 BL，触发数据清除：`fastboot flashing lock`

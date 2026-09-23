@@ -21,6 +21,8 @@
   AndroidToolsPkg/AndroidToolsPkg.dec
 
 [LibraryClasses]
+  MenuInputLib
+  MenuConsoleLib
   BaseLib
   BaseMemoryLib
   DebugLib

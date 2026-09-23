@@ -30,109 +30,55 @@ CONST CHAR8 *gSfbMenuModuleTag = "SuperFbMenu";
 SFB_KEY
 SfbWaitForKey (IN UINT32 TimeoutMs)
 {
-  EFI_STATUS     Status;
-  EFI_EVENT      TimerEvent = NULL;
-  EFI_EVENT      WaitList[2];
-  UINTN          WaitCount;
-  UINTN          EventIndex;
-  EFI_INPUT_KEY  Key;
-  SFB_KEY        Result = SfbKeyTimeout;
-
-  if (TimeoutMs != 0) {
-    Status = gBS->CreateEvent (EVT_TIMER, TPL_CALLBACK, NULL, NULL, &TimerEvent);
-    if (EFI_ERROR (Status)) {
-      TimerEvent = NULL;
-    } else {
-      /* Boot services timers count in 100ns units. */
-      Status = gBS->SetTimer (TimerEvent, TimerRelative,
-                              (UINT64)TimeoutMs * 10000);
-      if (EFI_ERROR (Status)) {
-        gBS->CloseEvent (TimerEvent);
-        TimerEvent = NULL;
-      }
-    }
+  switch (MenuInputWaitForKeyWithIdle (TimeoutMs, MenuConsoleAnimate)) {
+  case MenuInputUp:
+    return SfbKeyUp;
+  case MenuInputDown:
+    return SfbKeyDown;
+  case MenuInputSelect:
+    return SfbKeySelect;
+  default:
+    return SfbKeyTimeout;
   }
-
-  WaitList[0] = gST->ConIn->WaitForKey;
-  WaitCount = 1;
-  if (TimerEvent != NULL) {
-    WaitList[1] = TimerEvent;
-    WaitCount = 2;
-  }
-
-  while (TRUE) {
-    Status = gBS->WaitForEvent (WaitCount, WaitList, &EventIndex);
-    if (EFI_ERROR (Status)) {
-      DEBUG ((EFI_D_ERROR, "SFB: WaitForEvent failed: %r\n", Status));
-      break;
-    }
-
-    if (EventIndex == 1) {
-      break;
-    }
-
-    Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    /*
-     * On the handset the Qualcomm keypad driver reports the volume keys as
-     * SCAN_UP and SCAN_DOWN, and power arrives as a carriage return.
-     *
-     * Anything left over counts as confirm: on a three-key handset there is
-     * nothing else it can be, so the menu stays usable even if a platform
-     * reports power differently from what is expected here.
-     */
-    if (Key.ScanCode == SCAN_UP) {
-      Result = SfbKeyUp;
-    } else if (Key.ScanCode == SCAN_DOWN) {
-      Result = SfbKeyDown;
-    } else {
-      DEBUG ((EFI_D_VERBOSE, "SFB: confirm key scan=0x%x char=0x%x\n",
-              Key.ScanCode, Key.UnicodeChar));
-      Result = SfbKeySelect;
-    }
-    break;
-  }
-
-  if (TimerEvent != NULL) {
-    gBS->CloseEvent (TimerEvent);
-  }
-
-  return Result;
 }
 
 /* ---- drawing ------------------------------------------------------------ */
 
 VOID
-SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
+SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle,
+                IN UINTN ContentRows, IN UINTN ContentColumns)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
-  Print (L"%s\r\n", Title);
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  /* Caller clears first so row/column measurements use the current GOP. */
+  MenuConsoleSetAttribute (SFB_ATTR_TITLE);
+  MenuConsoleCenterPage (ContentRows, ContentColumns);
+  MenuConsolePrintLine (L"%s", Title);
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
   if (Subtitle != NULL) {
-    Print (L"%s\r\n", Subtitle);
+    MenuConsolePrintLine (L"%s", Subtitle);
   }
-  Print (L"\r\n");
+  MenuConsolePrint (L"\r\n");
 }
 
 VOID
 SfbEndScreen (IN CONST CHAR16 *Footer)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
-  Print (L"\r\n%s\r\n", Footer);
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
+  MenuConsolePrint (L"\r\n%s\r\n", Footer);
 }
 
 VOID
 SfbDrawRow (IN BOOLEAN Selected, IN CONST CHAR16 *Marker, IN CONST CHAR16 *Text)
 {
-  gST->ConOut->SetAttribute (gST->ConOut,
-                             Selected ? SFB_ATTR_SELECTED : SFB_ATTR_NORMAL);
-  Print (L"%s %s %s", Selected ? L">" : L" ", Marker, Text);
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
-  Print (L"\r\n");
+  MenuConsoleSetAttribute (Selected ? SFB_ATTR_SELECTED : SFB_ATTR_NORMAL);
+  if (Selected) {
+    CHAR16 Prefix[16];
+
+    UnicodeSPrint (Prefix, sizeof (Prefix), L"> %s ", Marker);
+    MenuConsolePrintMarqueeLine (Prefix, Text);
+  } else {
+    MenuConsolePrintLine (L"  %s %s", Marker, Text);
+  }
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
 }
 
 /*
@@ -174,28 +120,29 @@ SfbMoveCursor (IN OUT UINTN *Cursor, IN UINTN Count, IN SFB_KEY Key)
 VOID
 SfbReportStatus (IN CONST CHAR16 *What, IN EFI_STATUS Status)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
-  Print (L"\r\n%s: %r\r\n", What, Status);
-  Print (L"Press power to continue.\r\n");
+  /* A returning child image may have changed the console/GOP mode. Start a
+   * fresh page and reacquire graphics before reporting its result. */
+  MenuConsoleClear ();
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
+  MenuConsolePrintMessage (L"Status\r\n\r\n%s: %r\r\nPress power to continue.", What, Status);
+  MenuInputFlush ();
   SfbWaitForKey (0);
 }
 
 /*
- * Hand the screen over to fastboot. The menu is the last thing that draws
- * before control leaves for the fastboot loop, which prints nothing of its own
- * until a host connects, so without this the user would be staring at a boot
- * menu that no longer responds to anything.
+ * Announce fastboot while USB initializes; FastbootLib then draws its own
+ * action menu using the same console renderer.
  */
 VOID
 SfbShowFastbootMode (VOID)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  MenuConsoleSetAttribute (SFB_ATTR_TITLE);
+  MenuConsoleClear ();
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
 
-  Print (L"FASTBOOT MODE\r\n");
+  MenuConsolePrintMessage (L"FASTBOOT MODE");
 
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
 }
 
 /*
@@ -206,20 +153,26 @@ SfbShowFastbootMode (VOID)
 VOID
 SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
+  MenuConsoleSetAttribute (SFB_ATTR_TITLE);
   /*
    * An unattended default boot must not blank whatever is already on screen
    * (typically the boot splash): only clear when the launch came from the menu,
    * where the menu itself is what needs clearing away.
    */
   if (ClearScreen) {
-    gST->ConOut->ClearScreen (gST->ConOut);
+    MenuConsoleClear ();
   }
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
 
-  Print (L"Booting %s\r\n", (Name != NULL && Name[0] != L'\0') ? Name : L"...");
+  if (ClearScreen) {
+    MenuConsolePrintMessage (L"Booting %s", (Name != NULL && Name[0] != L'\0') ? Name : L"...");
+  } else {
+    /* Keep the unattended OEM-on banner on the firmware console: no graphics
+     * initialization, clear or positioning on this path. */
+    MenuConsolePrint (L"Booting %s\r\n", (Name != NULL && Name[0] != L'\0') ? Name : L"...");
+  }
 
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
 }
 
 /*
@@ -230,13 +183,13 @@ SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen)
 VOID
 SfbShowActionScreen (IN CONST CHAR16 *Text)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  MenuConsoleSetAttribute (SFB_ATTR_TITLE);
+  MenuConsoleClear ();
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
 
-  Print (L"%s\r\n", Text);
+  MenuConsolePrintMessage (L"%s", Text);
 
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
 }
 
 /*
@@ -249,20 +202,22 @@ SfbShowActionScreen (IN CONST CHAR16 *Text)
 VOID
 SfbShowEnteringMenu (VOID)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  /* Never initialized by the unattended boot/banner path. */
+  MenuConsoleInitialize ();
+  MenuConsoleSetAttribute (SFB_ATTR_TITLE);
+  MenuConsoleClear ();
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
 
-  Print (L"Entering Boot Menu\r\n");
+  MenuConsolePrintMessage (L"Entering Boot Menu");
 
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
 
   /* Wait for the key to be released... */
   gBS->Stall (SFB_ENTER_MENU_DELAY_S * 1000 * 1000);
 
   /* ...then drop anything typed or held during the wait so it does not leak
    * into the menu as a spurious keypress. */
-  gST->ConIn->Reset (gST->ConIn, FALSE);
+  MenuInputFlush ();
 }
 
 /* ---- boot menu ---------------------------------------------------------- */
@@ -276,15 +231,43 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
   UINTN  Start;
   UINTN  Index;
   UINTN  Last;
+  UINTN  Rows;
+  UINTN  Visible;
+  UINTN  Columns;
+  BOOLEAN Overflow;
+  CONST CHAR16 *Footer = L"Vol Up/Down: move   Power: select";
+  CONST CHAR16 *Empty = L"  No boot entries found.";
 
-  SfbBeginScreen (Title, NULL);
+  MenuConsoleSetAttribute (SFB_ATTR_TITLE);
+  MenuConsoleClear ();
+  /* Clear reacquires GOP after child images. Query the full-screen capacity
+   * once, then place title, entries and footer as one slightly raised block. */
+  Rows = SFB_VISIBLE_ROWS;
+  Visible = MIN (Menu->Count, Rows);
+  Overflow = (BOOLEAN)(Menu->Count > Rows);
+  Columns = MAX (StrLen (Title), StrLen (Footer));
+  if (Menu->Count == 0) {
+    Columns = MAX (Columns, StrLen (Empty));
+  }
+  /* Include off-screen entries so scrolling cannot shift the block sideways.
+   * Four cells are row markers/spaces, plus two for the submenu suffix.
+   * The overflow message has at most 10 decimal digits (UINT32), so it is
+   * shorter than Footer. The renderer caps long names to the block width. */
+  for (Index = 0; Index < Menu->Count; Index++) {
+    Columns = MAX (Columns, 4 + StrLen (Menu->Entry[Index].Desc) +
+                    (Menu->Entry[Index].Kind == SfbEntrySubmenu ? 2 : 0));
+  }
+  MenuConsoleCenterPage (MAX (1, Visible) + 4 + (Overflow ? 1 : 0), Columns);
+  MenuConsolePrintLine (L"%s", Title);
+  MenuConsoleSetAttribute (SFB_ATTR_NORMAL);
+  MenuConsolePrint (L"\r\n");
 
   if (Menu->Count == 0) {
-    Print (L"  No boot entries found.\r\n");
+    MenuConsolePrint (L"%s\r\n", Empty);
   }
 
-  Start = SfbWindowStart (Cursor, Menu->Count, SFB_VISIBLE_ROWS);
-  Last = Start + SFB_VISIBLE_ROWS;
+  Start = SfbWindowStart (Cursor, Menu->Count, Rows);
+  Last = Start + Visible;
   if (Last > Menu->Count) {
     Last = Menu->Count;
   }
@@ -306,10 +289,13 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
   }
 
   if (Last < Menu->Count) {
-    Print (L"    ... %u more\r\n", (UINT32)(Menu->Count - Last));
+    MenuConsolePrint (L"    ... %u more\r\n", (UINT32)(Menu->Count - Last));
+  } else if (Overflow) {
+    /* Keep the footer and block origin still on the final scroll window. */
+    MenuConsolePrint (L"\r\n");
   }
 
-  SfbEndScreen (L"Vol Up/Down: move   Power: select");
+  SfbEndScreen (Footer);
 }
 
 /*
@@ -365,6 +351,10 @@ SfbRunSubMenu (IN EFI_HANDLE   Volume,
       continue;
     }
 
+    if (Key != SfbKeySelect) {
+      continue;
+    }
+
     if (Menu->Count == 0) {
       continue;
     }
@@ -390,6 +380,7 @@ SfbRunSubMenu (IN EFI_HANDLE   Volume,
     case SfbEntryEfiFile:
     default:
       Status = SfbLaunchEntry (&Menu->Entry[Chosen], TRUE, TRUE);//Entries in submenu never defaults
+      MenuInputFlush ();
       if (EFI_ERROR (Status)) {
         SfbReportStatus (L"Boot failed", Status);
       }
@@ -433,6 +424,10 @@ SfbRunBootMenu (VOID)
 
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
       SfbMoveCursor (&Cursor, Menu.Count, Key);
+      continue;
+    }
+
+    if (Key != SfbKeySelect) {
       continue;
     }
 
@@ -480,6 +475,7 @@ SfbRunBootMenu (VOID)
     case SfbEntryEfiFile:
     default:
       Status = SfbLaunchEntry (&Menu.Entry[Chosen], FALSE, TRUE);
+      MenuInputFlush ();
       if (EFI_ERROR (Status)) {
         SfbReportStatus (L"Boot failed", Status);
       }

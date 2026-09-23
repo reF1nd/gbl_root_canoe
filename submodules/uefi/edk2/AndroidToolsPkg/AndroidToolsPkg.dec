@@ -18,6 +18,10 @@
   Include
 
 [LibraryClasses]
+  ## Debounced interactive menu input (not the power-on key scanner).
+  MenuInputLib|Include/Library/MenuInputLib.h
+  ## Scalable bitmap menu output, with firmware text fallback.
+  MenuConsoleLib|Include/Library/MenuConsoleLib.h
   ## Super-fastboot style console menu (volume up/down + power).
   AndroidToolsUi|AndroidToolsPkg/Library/AndroidToolsUi/AndroidToolsUi.inf
 

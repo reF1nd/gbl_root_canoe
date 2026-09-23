@@ -1,0 +1,26 @@
+[Defines]
+  INF_VERSION = 0x00010006
+  BASE_NAME = MenuConsoleLib
+  FILE_GUID = 6253A1D2-9687-41B4-914E-C37D62C6A6F9
+  MODULE_TYPE = BASE
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = MenuConsoleLib
+  DESTRUCTOR = MenuConsoleDestroy
+
+[Sources]
+  MenuConsoleLib.c
+  MenuFont.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+  AndroidToolsPkg/AndroidToolsPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  PrintLib
+  UefiBootServicesTableLib
+
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid

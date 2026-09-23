@@ -13,6 +13,8 @@
 #define __SUPER_FB_MENU_H__
 
 #include <Uefi.h>
+#include <Library/MenuConsoleLib.h>
+#include <Library/MenuInputLib.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/SimpleFileSystem.h>
 
@@ -384,10 +386,12 @@ SfbWaitForKey (IN UINT32 TimeoutMs);
 /* ---- shared console helpers (SuperFbMenu.c) ----------------------------- */
 
 /* Rows of list content a screen shows before it starts scrolling. */
-#define SFB_VISIBLE_ROWS  12
+#define SFB_VISIBLE_ROWS  MenuConsoleVisibleRows (10, 12)
 
+/* After MenuConsoleClear, position a measured page and draw its heading. */
 VOID
-SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle OPTIONAL);
+SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle OPTIONAL,
+                IN UINTN ContentRows, IN UINTN ContentColumns);
 
 VOID
 SfbEndScreen (IN CONST CHAR16 *Footer);

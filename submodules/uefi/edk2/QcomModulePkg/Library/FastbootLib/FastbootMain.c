@@ -79,9 +79,12 @@ found at
  */
 
 #include <Uefi.h>
+#include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 #include <Library/Debug.h>
 #include <Library/LinuxLoaderLib.h>
+#include <Library/MenuConsoleLib.h>
+#include <Library/MenuInputLib.h>
 #include <Library/PcdLib.h>
 #include <Library/StackCanary.h>
 #include <Library/UefiApplicationEntryPoint.h>
@@ -430,68 +433,64 @@ FastbootDrawModeScreen (VOID)
 {
   UINTN  Index;
 
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  MenuConsoleInitialize ();
+  MenuConsoleSetAttribute (FB_ATTR_TITLE);
+  MenuConsoleClear ();
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
 
-  Print (L"FASTBOOT MODE\r\n\r\n");
+  MenuConsoleCenterPage (FB_ACTION_ROWS + 4,
+                         StrLen (L"Vol Up/Down: move   Power: select"));
+  MenuConsolePrint (L"FASTBOOT MODE\r\n\r\n");
 
   for (Index = 0; Index < FB_ACTION_ROWS; Index++) {
-    gST->ConOut->SetAttribute (gST->ConOut,
-                               (Index == mFbActionCursor) ? FB_ATTR_SELECTED
-                                                           : FB_ATTR_NORMAL);
-    Print (L"%s %s\r\n",
+    MenuConsoleSetAttribute ((Index == mFbActionCursor) ? FB_ATTR_SELECTED
+                                                       : FB_ATTR_NORMAL);
+    MenuConsolePrintLine (L"%s %s",
            (Index == mFbActionCursor) ? L">" : L" ",
            mFbActionRow[Index]);
   }
 
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_NORMAL);
-  Print (L"\r\nVol Up/Down: move   Power: select\r\n");
+  MenuConsoleSetAttribute (FB_ATTR_NORMAL);
+  MenuConsolePrint (L"\r\nVol Up/Down: move   Power: select\r\n");
 }
 
 STATIC
 VOID
 FastbootShowActionScreen (IN CONST CHAR16 *Text)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  MenuConsoleSetAttribute (FB_ATTR_TITLE);
+  MenuConsoleClear ();
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
 
-  Print (L"%s\r\n", Text);
+  MenuConsolePrintMessage (L"%s", Text);
 
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_NORMAL);
+  MenuConsoleSetAttribute (FB_ATTR_NORMAL);
 }
 
 /*
  * Non-blocking console poll. Returns the action to take, or FbActionNone when
- * no key is pending. Volume up/down move the highlight (and redraw); anything
- * else counts as confirm, matching how the boot menu treats the power key.
+ * no accepted key is pending. Share the menu's repeat/confirmation guards,
+ * but never wait or stall here: USB must be serviced on every iteration.
  */
 STATIC
 FB_ACTION
 FastbootPollActionKey (VOID)
 {
-  EFI_STATUS     Status;
-  EFI_INPUT_KEY  Key;
+  MENU_INPUT_KEY Key;
 
-  Status = gBS->CheckEvent (gST->ConIn->WaitForKey);
-  if (Status == EFI_NOT_READY || EFI_ERROR (Status)) {
+  Key = MenuInputPollKey ();
+  if (Key == MenuInputNone) {
     return FbActionNone;
   }
 
-  Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
-  if (EFI_ERROR (Status)) {
-    return FbActionNone;
-  }
-
-  if (Key.ScanCode == SCAN_UP) {
+  if (Key == MenuInputUp) {
     mFbActionCursor = (mFbActionCursor == 0) ? FB_ACTION_ROWS - 1
                                               : mFbActionCursor - 1;
     FastbootDrawModeScreen ();
     return FbActionNone;
   }
 
-  if (Key.ScanCode == SCAN_DOWN) {
+  if (Key == MenuInputDown) {
     mFbActionCursor = (mFbActionCursor + 1 >= FB_ACTION_ROWS)
                         ? 0 : mFbActionCursor + 1;
     FastbootDrawModeScreen ();
@@ -522,7 +521,7 @@ EFI_STATUS FastbootInitialize (VOID)
    * fire a spurious confirm on the highlighted action row.
    */
   gBS->Stall (1000000);
-  gST->ConIn->Reset (gST->ConIn, FALSE);
+  MenuInputFlush ();
   mFbActionCursor = 0;
   FastbootDrawModeScreen ();
 

@@ -113,11 +113,9 @@ BlConfirm (
   /* 1s: let the selecting key release, then drop anything held over so it
    * cannot confirm the prompt the instant it appears. */
   gBS->Stall (1000000);
-  gST->ConIn->Reset (gST->ConIn, FALSE);
+  MenuInputFlush ();
 
-  AtUiBeginScreen (Title, NULL);
-  Print (L"%s\r\n", (Warning != NULL) ? Warning : L"");
-  Print (L"\r\nPower = confirm   Vol+/- = cancel\r\n");
+  AtUiDrawConfirmation (Title, Warning, NULL);
 
   Key = AtUiWaitForKey (0);
   if (Key != AtKeySelect) {

@@ -34,76 +34,18 @@
 #define AT_ENTER_MENU_DELAY_S  2
 
 AT_KEY
-AtUiWaitForKey (
-  IN UINT32 TimeoutMs
-  )
+AtUiWaitForKey (IN UINT32 TimeoutMs)
 {
-  EFI_STATUS     Status;
-  EFI_EVENT      TimerEvent = NULL;
-  EFI_EVENT      WaitList[2];
-  UINTN          WaitCount;
-  UINTN          EventIndex;
-  EFI_INPUT_KEY  Key;
-  AT_KEY         Result = AtKeyTimeout;
-
-  if (TimeoutMs != 0) {
-    Status = gBS->CreateEvent (EVT_TIMER, TPL_CALLBACK, NULL, NULL, &TimerEvent);
-    if (EFI_ERROR (Status)) {
-      TimerEvent = NULL;
-    } else {
-      /* Boot services timers count in 100ns units. */
-      Status = gBS->SetTimer (TimerEvent, TimerRelative,
-                              (UINT64)TimeoutMs * 10000);
-      if (EFI_ERROR (Status)) {
-        gBS->CloseEvent (TimerEvent);
-        TimerEvent = NULL;
-      }
-    }
+  switch (MenuInputWaitForKeyWithIdle (TimeoutMs, MenuConsoleAnimate)) {
+  case MenuInputUp:
+    return AtKeyUp;
+  case MenuInputDown:
+    return AtKeyDown;
+  case MenuInputSelect:
+    return AtKeySelect;
+  default:
+    return AtKeyTimeout;
   }
-
-  WaitList[0] = gST->ConIn->WaitForKey;
-  WaitCount = 1;
-  if (TimerEvent != NULL) {
-    WaitList[1] = TimerEvent;
-    WaitCount = 2;
-  }
-
-  while (TRUE) {
-    Status = gBS->WaitForEvent (WaitCount, WaitList, &EventIndex);
-    if (EFI_ERROR (Status)) {
-      DEBUG ((DEBUG_ERROR, "AT: WaitForEvent failed: %r\n", Status));
-      break;
-    }
-
-    if (EventIndex == 1) {
-      break;
-    }
-
-    Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    /*
-     * On the handset the Qualcomm keypad driver reports the volume keys as
-     * SCAN_UP and SCAN_DOWN, and power arrives as a carriage return. Anything
-     * left over counts as confirm.
-     */
-    if (Key.ScanCode == SCAN_UP) {
-      Result = AtKeyUp;
-    } else if (Key.ScanCode == SCAN_DOWN) {
-      Result = AtKeyDown;
-    } else {
-      Result = AtKeySelect;
-    }
-    break;
-  }
-
-  if (TimerEvent != NULL) {
-    gBS->CloseEvent (TimerEvent);
-  }
-
-  return Result;
 }
 
 /*
@@ -117,18 +59,19 @@ AtUiEnterMenu (
   IN CONST CHAR16 *Title
   )
 {
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  MenuConsoleInitialize ();
+  MenuConsoleSetAttribute (AT_ATTR_TITLE);
+  MenuConsoleClear ();
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-  Print (L"Entering %s\r\n", (Title != NULL) ? Title : L"Menu");
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_NORMAL);
+  MenuConsolePrintMessage (L"Entering %s", (Title != NULL) ? Title : L"Menu");
+  MenuConsoleSetAttribute (AT_ATTR_NORMAL);
 
   /* Wait for the launching key to be released... */
   gBS->Stall (AT_ENTER_MENU_DELAY_S * 1000 * 1000);
 
   /* ...then drop anything typed or held during the wait so it does not leak
    * into the menu as a spurious confirm. */
-  gST->ConIn->Reset (gST->ConIn, FALSE);
+  MenuInputFlush ();
 }
 
 /* ---- drawing ------------------------------------------------------------ */
@@ -136,18 +79,20 @@ AtUiEnterMenu (
 VOID
 AtUiBeginScreen (
   IN CONST CHAR16 *Title,
-  IN CONST CHAR16 *Subtitle
+  IN CONST CHAR16 *Subtitle,
+  IN UINTN ContentRows,
+  IN UINTN ContentColumns
   )
 {
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  MenuConsoleSetAttribute (AT_ATTR_TITLE);
+  MenuConsoleCenterPage (ContentRows, ContentColumns);
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-  Print (L"%s\r\n", Title);
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_NORMAL);
+  MenuConsolePrintLine (L"%s", Title);
+  MenuConsoleSetAttribute (AT_ATTR_NORMAL);
   if (Subtitle != NULL) {
-    Print (L"%s\r\n", Subtitle);
+    MenuConsolePrintLine (L"%s", Subtitle);
   }
-  Print (L"\r\n");
+  MenuConsolePrint (L"\r\n");
 }
 
 VOID
@@ -155,9 +100,9 @@ AtUiEndScreen (
   IN CONST CHAR16 *Footer
   )
 {
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_NORMAL);
+  MenuConsoleSetAttribute (AT_ATTR_NORMAL);
   if (Footer != NULL) {
-    Print (L"\r\n%s\r\n", Footer);
+    MenuConsolePrint (L"\r\n%s\r\n", Footer);
   }
 }
 
@@ -168,12 +113,18 @@ AtUiDrawRow (
   IN CONST CHAR16 *Text
   )
 {
-  gST->ConOut->SetAttribute (gST->ConOut,
-                             Selected ? AT_ATTR_SELECTED : AT_ATTR_NORMAL);
-  Print (L"%s %s %s", Selected ? L">" : L" ",
-         (Marker != NULL) ? Marker : L" ", (Text != NULL) ? Text : L"");
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_NORMAL);
-  Print (L"\r\n");
+  MenuConsoleSetAttribute (Selected ? AT_ATTR_SELECTED : AT_ATTR_NORMAL);
+  if (Selected) {
+    CHAR16 Prefix[16];
+
+    UnicodeSPrint (Prefix, sizeof (Prefix), L"> %s ",
+                   (Marker != NULL) ? Marker : L" ");
+    MenuConsolePrintMarqueeLine (Prefix, (Text != NULL) ? Text : L"");
+  } else {
+    MenuConsolePrintLine (L"  %s %s", (Marker != NULL) ? Marker : L" ",
+                          (Text != NULL) ? Text : L"");
+  }
+  MenuConsoleSetAttribute (AT_ATTR_NORMAL);
 }
 
 UINTN
@@ -218,11 +169,11 @@ AtUiShowMessage (
   IN CONST CHAR16 *Text
   )
 {
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
+  MenuConsoleSetAttribute (AT_ATTR_TITLE);
+  MenuConsoleClear ();
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-  Print (L"\r\n\r\n  %s\r\n", (Text != NULL) ? Text : L"");
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_NORMAL);
+  MenuConsolePrintMessage (L"%s", (Text != NULL) ? Text : L"");
+  MenuConsoleSetAttribute (AT_ATTR_NORMAL);
 }
 
 VOID
@@ -231,10 +182,57 @@ AtUiReportStatus (
   IN EFI_STATUS    Status
   )
 {
-  gST->ConOut->SetAttribute (gST->ConOut, AT_ATTR_NORMAL);
-  Print (L"\r\n%s: %r\r\n", (What != NULL) ? What : L"", Status);
-  Print (L"Press power to continue.\r\n");
+  MenuConsoleClear ();
+  MenuConsoleSetAttribute (AT_ATTR_NORMAL);
+  MenuConsolePrintMessage (L"Status\r\n\r\n%s: %r\r\nPress power to continue.",
+                          (What != NULL) ? What : L"", Status);
+  MenuInputFlush ();
   AtUiWaitForKey (0);
+}
+
+VOID
+AtUiDrawConfirmation (
+  IN CONST CHAR16 *Title,
+  IN CONST CHAR16 *Warning,
+  IN CONST CHAR16 *Detail
+  )
+{
+  MenuConsoleSetAttribute (AT_ATTR_TITLE);
+  MenuConsoleClear ();
+  gST->ConOut->EnableCursor (gST->ConOut, FALSE);
+  /* Measure all warning text, including wrapped lines. Never clip a warning
+   * to the menu's one-row labels or change the caller's confirmation policy. */
+  MenuConsolePrintMessage (L"%s\r\n\r\n%s\r\n%s%s%s\r\nPower = confirm   Vol+/- = cancel",
+                          Title, Warning != NULL ? Warning : L"",
+                          Detail != NULL ? L"\r\n" : L"",
+                          Detail != NULL ? Detail : L"",
+                          Detail != NULL ? L"\r\n" : L"");
+  MenuConsoleSetAttribute (AT_ATTR_NORMAL);
+}
+
+STATIC
+VOID
+AtUiDrawMenu (IN CONST CHAR16 *Title, IN CONST CHAR16 **Items,
+              IN UINTN Count, IN UINTN Cursor, IN CONST CHAR16 *Footer)
+{
+  UINTN Columns = StrLen (Title);
+  UINTN Visible, Start, Index;
+
+  MenuConsoleClear ();
+  Visible = MIN (Count, AT_VISIBLE_ROWS);
+  if (Footer != NULL) {
+    Columns = MAX (Columns, StrLen (Footer));
+  }
+  /* Include off-screen items so scrolling never shifts the block. */
+  for (Index = 0; Index < Count; Index++) {
+    Columns = MAX (Columns, 4 + StrLen (Items[Index]));
+  }
+  AtUiBeginScreen (Title, NULL, Visible + 2 + (Footer != NULL ? 2 : 0), Columns);
+  Start = AtUiWindowStart (Cursor, Count, Visible);
+  for (Index = Start; Index < Start + Visible && Index < Count; Index++) {
+    AtUiDrawRow ((BOOLEAN)(Index == Cursor), L" ", Items[Index]);
+  }
+  AtUiEndScreen (Footer);
 }
 
 EFI_STATUS
@@ -247,9 +245,6 @@ AtUiRunMenu (
   )
 {
   UINTN   Cursor = 0;
-  UINTN   Start;
-  UINTN   Index;
-  UINTN   Visible;
   AT_KEY  Key;
 
   if (Items == NULL || Selected == NULL || Count == 0) {
@@ -257,19 +252,10 @@ AtUiRunMenu (
   }
 
   /* Drop anything held since launch so it does not move the cursor at once. */
-  gST->ConIn->Reset (gST->ConIn, FALSE);
-
-  Visible = (Count < AT_VISIBLE_ROWS) ? Count : AT_VISIBLE_ROWS;
+  MenuInputFlush ();
 
   while (TRUE) {
-    AtUiBeginScreen (Title, NULL);
-
-    Start = AtUiWindowStart (Cursor, Count, Visible);
-    for (Index = Start; Index < Start + Visible && Index < Count; Index++) {
-      AtUiDrawRow ((BOOLEAN)(Index == Cursor), L" ", Items[Index]);
-    }
-
-    AtUiEndScreen (Footer);
+    AtUiDrawMenu (Title, Items, Count, Cursor, Footer);
 
     Key = AtUiWaitForKey (0);
     if (Key == AtKeySelect) {

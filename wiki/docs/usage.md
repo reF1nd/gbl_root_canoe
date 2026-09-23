@@ -66,4 +66,4 @@
 
 ## Notes
 
-- When OEM unlocking is enabled and the white warning text appears on boot, **press Volume Down to enter Superfastboot mode.**
+- When OEM unlocking is enabled, **hold Volume Up during startup to open the boot menu, then select Enter Fastboot to enter Superfastboot mode.**

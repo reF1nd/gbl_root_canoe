@@ -268,6 +268,27 @@ SfbOpenDirectory (IN EFI_HANDLE          Volume,
 
 /* ---- action menu for a chosen EFI application --------------------------- */
 
+STATIC
+VOID
+SfbDrawActions (IN CONST CHAR16 *Title, IN CONST CHAR16 *Path,
+                IN CONST CHAR16 **Actions, IN UINTN Count, IN UINTN Cursor)
+{
+  UINTN Index;
+  UINTN Columns = MAX (StrLen (Title), StrLen (Path));
+  CONST CHAR16 *Footer = L"Vol Up/Down: move   Power: select";
+
+  MenuConsoleClear ();
+  Columns = MAX (Columns, StrLen (Footer));
+  for (Index = 0; Index < Count; Index++) {
+    Columns = MAX (Columns, 4 + StrLen (Actions[Index]));
+  }
+  SfbBeginScreen (Title, Path, Count + 5, Columns);
+  for (Index = 0; Index < Count; Index++) {
+    SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Actions[Index]);
+  }
+  SfbEndScreen (Footer);
+}
+
 /*
  * A UEFI driver is loaded, not booted: it installs protocols and returns rather
  * than taking over the machine. Offer just that. Never unwinds to the boot menu
@@ -286,21 +307,18 @@ SfbDriverActionMenu (IN EFI_HANDLE   Volume,
   UINTN  Cursor = 0;
 
   while (TRUE) {
-    UINTN       Index;
     SFB_KEY     Key;
     EFI_STATUS  Status;
 
-    SfbBeginScreen (L"EFI Driver", FullPath);
-
-    for (Index = 0; Index < ARRAY_SIZE (Actions); Index++) {
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Actions[Index]);
-    }
-
-    SfbEndScreen (L"Vol Up/Down: move   Power: select");
+    SfbDrawActions (L"EFI Driver", FullPath, Actions, ARRAY_SIZE (Actions), Cursor);
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
       SfbMoveCursor (&Cursor, ARRAY_SIZE (Actions), Key);
+      continue;
+    }
+
+    if (Key != SfbKeySelect) {
       continue;
     }
 
@@ -358,16 +376,9 @@ SfbEfiActionMenu (IN EFI_HANDLE   Volume,
   }
 
   while (TRUE) {
-    UINTN    Index;
     SFB_KEY  Key;
 
-    SfbBeginScreen (L"EFI Application", FullPath);
-
-    for (Index = 0; Index < ARRAY_SIZE (Actions); Index++) {
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Actions[Index]);
-    }
-
-    SfbEndScreen (L"Vol Up/Down: move   Power: select");
+    SfbDrawActions (L"EFI Application", FullPath, Actions, ARRAY_SIZE (Actions), Cursor);
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
@@ -375,10 +386,15 @@ SfbEfiActionMenu (IN EFI_HANDLE   Volume,
       continue;
     }
 
+    if (Key != SfbKeySelect) {
+      continue;
+    }
+
     if (Cursor == 0) {
       /* Temporary: deliberately does not touch the default-entry variable.
        * Menu-driven launch, so clear the screen for the "Booting" banner. */
       Status = SfbLaunchEntry (&Entry, TRUE, TRUE);
+      MenuInputFlush ();
       if (EFI_ERROR (Status)) {
         SfbReportStatus (L"Boot failed", Status);
       }
@@ -402,6 +418,48 @@ SfbEfiActionMenu (IN EFI_HANDLE   Volume,
 }
 
 /* ---- directory navigation ----------------------------------------------- */
+
+STATIC
+VOID
+SfbDrawDirectory (IN CONST CHAR16 *Title, IN CONST CHAR16 *Path,
+                  IN CONST SFB_DIR_ENTRY *List, IN UINTN Count,
+                  IN UINTN Cursor, IN BOOLEAN Truncated)
+{
+  CONST CHAR16 *Footer = L"Vol Up/Down: move   Power: open";
+  UINTN Columns = MAX (StrLen (Title), StrLen (Path));
+  UINTN Visible, Start, Last, Index;
+  BOOLEAN Overflow;
+
+  MenuConsoleClear ();
+  Visible = MIN (Count, SFB_VISIBLE_ROWS);
+  Overflow = (BOOLEAN)(Count > Visible);
+  Columns = MAX (Columns, StrLen (Footer));
+  for (Index = 0; Index < Count; Index++) {
+    Columns = MAX (Columns, 6 + StrLen (List[Index].Name));
+  }
+  if (Truncated) {
+    Columns = MAX (Columns, StrLen (L"    Additional entries not shown."));
+  }
+  SfbBeginScreen (Title, Path, Visible + 5 + (Overflow ? 1 : 0) +
+                  (Truncated ? 2 : 0), Columns);
+  Start = SfbWindowStart (Cursor, Count, Visible);
+  Last = MIN (Count, Start + Visible);
+  for (Index = Start; Index < Last; Index++) {
+    CONST CHAR16 *Marker = List[Index].IsDir ? L"[D]" :
+                           (SfbIsEfiFile (List[Index].Name) ? L"[E]" : L"   ");
+    SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, List[Index].Name);
+  }
+  if (Last < Count) {
+    MenuConsolePrint (L"    ... %u more\r\n", (UINT32)(Count - Last));
+  } else if (Overflow) {
+    MenuConsolePrint (L"\r\n");
+  }
+  if (Truncated) {
+    MenuConsolePrint (L"    Directory limit: %u entries\r\n", (UINT32)SFB_MAX_DIR_ENTRIES);
+    MenuConsolePrint (L"    Additional entries not shown.\r\n");
+  }
+  SfbEndScreen (Footer);
+}
 
 /* Returns TRUE when the browser should unwind back to the boot menu. */
 STATIC
@@ -429,9 +487,6 @@ SfbBrowseVolume (IN EFI_HANDLE   Volume,
   StrCpyS (Path, SFB_PATH_CHARS, BrowseRoot);
 
   while (TRUE) {
-    UINTN                Start;
-    UINTN                Last;
-    UINTN                Index;
     SFB_KEY              Key;
     CONST SFB_DIR_ENTRY  *Selected;
     CHAR16               FullPath[SFB_PATH_CHARS];
@@ -465,41 +520,15 @@ SfbBrowseVolume (IN EFI_HANDLE   Volume,
       Reload = FALSE;
     }
 
-    SfbBeginScreen (VolumeLabel, Path);
-
-    Start = SfbWindowStart (Cursor, Count, SFB_VISIBLE_ROWS);
-    Last = Start + SFB_VISIBLE_ROWS;
-    if (Last > Count) {
-      Last = Count;
-    }
-
-    for (Index = Start; Index < Last; Index++) {
-      CONST CHAR16  *Marker;
-
-      if (List[Index].IsDir) {
-        Marker = L"[D]";
-      } else if (SfbIsEfiFile (List[Index].Name)) {
-        Marker = L"[E]";
-      } else {
-        Marker = L"   ";
-      }
-
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, List[Index].Name);
-    }
-
-    if (Last < Count) {
-      Print (L"    ... %u more\r\n", (UINT32)(Count - Last));
-    }
-    if (Truncated) {
-      Print (L"    (directory has more than %u entries; rest not shown)\r\n",
-             (UINT32)SFB_MAX_DIR_ENTRIES);
-    }
-
-    SfbEndScreen (L"Vol Up/Down: move   Power: open");
+    SfbDrawDirectory (VolumeLabel, Path, List, Count, Cursor, Truncated);
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
       SfbMoveCursor (&Cursor, Count, Key);
+      continue;
+    }
+
+    if (Key != SfbKeySelect) {
       continue;
     }
 
@@ -552,6 +581,39 @@ SfbBrowseVolume (IN EFI_HANDLE   Volume,
 typedef struct {
   CHAR16  Label[SFB_DESC_CHARS];
 } SFB_VOLUME_ROW;
+
+STATIC
+VOID
+SfbDrawVolumes (IN CONST SFB_VOLUME_ROW *Rows, IN UINTN VolumeCount,
+                IN UINTN Cursor)
+{
+  CONST CHAR16 *Title = L"EFI Program Selector";
+  CONST CHAR16 *Subtitle = L"Choose a FAT32 volume to browse.";
+  CONST CHAR16 *Footer = L"Vol Up/Down: move   Power: select";
+  UINTN Columns = MAX (StrLen (Subtitle), StrLen (Footer));
+  UINTN Count = VolumeCount + 1, Visible, Start, Last, Index;
+  BOOLEAN Overflow;
+
+  MenuConsoleClear ();
+  Visible = MIN (Count, SFB_VISIBLE_ROWS);
+  Overflow = (BOOLEAN)(Count > Visible);
+  for (Index = 0; Index < VolumeCount; Index++) {
+    Columns = MAX (Columns, 6 + StrLen (Rows[Index].Label));
+  }
+  SfbBeginScreen (Title, Subtitle, Visible + 5 + (Overflow ? 1 : 0), Columns);
+  Start = SfbWindowStart (Cursor, Count, Visible);
+  Last = MIN (Count, Start + Visible);
+  for (Index = Start; Index < Last; Index++) {
+    SfbDrawRow ((BOOLEAN)(Index == Cursor), Index == VolumeCount ? L" " : L"[V]",
+                Index == VolumeCount ? L"Back" : Rows[Index].Label);
+  }
+  if (Last < Count) {
+    MenuConsolePrint (L"    ... %u more\r\n", (UINT32)(Count - Last));
+  } else if (Overflow) {
+    MenuConsolePrint (L"\r\n");
+  }
+  SfbEndScreen (Footer);
+}
 
 VOID
 SfbRunFileBrowser (VOID)
@@ -618,35 +680,17 @@ SfbRunFileBrowser (VOID)
   RowCount = VolumeCount + 1;
 
   while (TRUE) {
-    UINTN    Start;
-    UINTN    Last;
     SFB_KEY  Key;
 
-    SfbBeginScreen (L"EFI Program Selector", L"Choose a FAT32 volume to browse.");
-
-    Start = SfbWindowStart (Cursor, RowCount, SFB_VISIBLE_ROWS);
-    Last = Start + SFB_VISIBLE_ROWS;
-    if (Last > RowCount) {
-      Last = RowCount;
-    }
-
-    for (Index = Start; Index < Last; Index++) {
-      if (Index == VolumeCount) {
-        SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", L"Back");
-      } else {
-        SfbDrawRow ((BOOLEAN)(Index == Cursor), L"[V]", Rows[Index].Label);
-      }
-    }
-
-    if (Last < RowCount) {
-      Print (L"    ... %u more\r\n", (UINT32)(RowCount - Last));
-    }
-
-    SfbEndScreen (L"Vol Up/Down: move   Power: select");
+    SfbDrawVolumes (Rows, VolumeCount, Cursor);
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
       SfbMoveCursor (&Cursor, RowCount, Key);
+      continue;
+    }
+
+    if (Key != SfbKeySelect) {
       continue;
     }
 
@@ -670,4 +714,3 @@ SfbRunFileBrowser (VOID)
   FreePool (Rows);
   FreePool (Volumes);
 }
-

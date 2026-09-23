@@ -78,6 +78,7 @@
 	SuperFbBrowser.c
 
 [Packages]
+	AndroidToolsPkg/AndroidToolsPkg.dec
 	ArmPkg/ArmPkg.dec
 	MdePkg/MdePkg.dec
 	EmbeddedPkg/EmbeddedPkg.dec
@@ -87,6 +88,8 @@
 	FatPkg/FatPkg.dec
 
 [LibraryClasses]
+  MenuInputLib
+	MenuConsoleLib
 	DxeServicesTableLib
 	UefiLib
 	UefiApplicationEntryPoint
